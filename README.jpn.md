@@ -1,5 +1,8 @@
 # OBS SEI Stamper プラグイン
 
+<img src="pic\sei_stamper_gau.png" alt="isolated" width="250"/>
+
+
 **OBS Studio用フレームレベルビデオ同期**
 
 [English](README.md) | [中文](README.chs.md) | [日本語](#日本語)

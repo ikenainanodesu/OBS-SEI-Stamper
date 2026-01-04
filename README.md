@@ -1,5 +1,8 @@
 # OBS SEI Stamper Plugin
 
+<img src="pic\sei_stamper_gau.png" alt="isolated" width="250"/>
+
+
 **Frame-Level Video Synchronization for OBS Studio**
 
 [English](#english) | [中文](README.chs.md) | [日本語](README.jpn.md)

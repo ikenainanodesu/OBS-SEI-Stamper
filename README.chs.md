@@ -1,5 +1,7 @@
 # OBS SEI Stamper 插件
 
+<img src="pic\sei_stamper_gau.png" alt="isolated" width="250"/>
+
 **OBS Studio 帧级别视频同步**
 
 [English](README.md) | [中文](#中文) | [日本語](README.jpn.md)
