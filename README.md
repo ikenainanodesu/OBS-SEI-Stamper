@@ -29,6 +29,12 @@ OBS SEI Stamper is an OBS Studio plugin that enables **frame-level video synchro
 - Broadcast-quality multi-source alignment
 - Live concert/event multi-angle recording
 
+### Demo Video
+
+📺 **[Watch Demo Video on YouTube](https://youtu.be/9aJCHxzy-ME)** *(Chinese language)*
+
+This demonstration shows OBS sending 4 SRT streams with identical settings over a local network. Using native OBS Media Source cannot achieve synchronization between streams, but with this plugin, all 4 streams are synchronized to within ±1 frame accuracy.
+
 ---
 
 ## Installation
