@@ -42,7 +42,7 @@ This demonstration shows OBS sending 4 SRT streams with identical settings over 
 
 ### Quick Install (Recommended)
 
-Download the latest release from [Releases](https://github.com/yourusername/obs-sei-stamper/releases) page.
+Download the latest release from [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) page.
 
 The release package includes:
 - `obs-sei-stamper.dll` - Main plugin
@@ -56,7 +56,7 @@ The release package includes:
 
 ### Manual Install Steps
 
-1. **Download the release package** from the [Releases](https://github.com/yourusername/obs-sei-stamper/releases) page
+1. **Download the release package** from the [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) page
 
 2. **Copy to OBS plugins directory:**
    ```powershell
@@ -264,7 +264,7 @@ If you prefer manual control over the build process:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/obs-sei-stamper.git
+   git clone https://github.com/ikenainanodesu/obs-sei-stamper.git
    cd obs-sei-stamper
    ```
 
@@ -343,8 +343,8 @@ GPL-2.0 License - following OBS Studio licensing
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/obs-sei-stamper/issues)
-- **Documentation**: [Wiki](https://github.com/yourusername/obs-sei-stamper/wiki)
+- **Issues**: [GitHub Issues](https://github.com/ikenainanodesu/obs-sei-stamper/issues)
+- **Documentation**: [Wiki](https://github.com/ikenainanodesu/obs-sei-stamper/wiki)
 
 ---
 
@@ -380,9 +380,9 @@ See [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/obs-sei-stamper/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/obs-sei-stamper/discussions)
-- **Documentation**: [Wiki](https://github.com/yourusername/obs-sei-stamper/wiki)
+- **Issues**: [GitHub Issues](https://github.com/ikenainanodesu/obs-sei-stamper/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ikenainanodesu/obs-sei-stamper/discussions)
+- **Documentation**: [Wiki](https://github.com/ikenainanodesu/obs-sei-stamper/wiki)
 
 ---
 

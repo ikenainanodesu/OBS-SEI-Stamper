@@ -87,6 +87,7 @@ release/
 *.rar
 
 # Debug files
+needs.md
 *.dmp
 *.stackdump
 

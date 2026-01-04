@@ -42,7 +42,7 @@ OBS SEI Stamperは、SEI（補足拡張情報）を使用してビデオスト�
 
 ### クイックインストール（推奨）
 
-[Releases](https://github.com/yourusername/obs-sei-stamper/releases)ページから最新リリースをダウンロードしてください。
+[Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases)ページから最新リリースをダウンロードしてください。
 
 リリースパッケージには以下が含まれます：
 - `obs-sei-stamper.dll` - メインプラグイン
@@ -56,7 +56,7 @@ OBS SEI Stamperは、SEI（補足拡張情報）を使用してビデオスト�
 
 ### 手動インストール手順
 
-1. **[Releases](https://github.com/yourusername/obs-sei-stamper/releases)ページからリリースパッケージをダウンロード**
+1. **[Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases)ページからリリースパッケージをダウンロード**
 
 2. **OBSプラグインディレクトリにコピー：**
    ```powershell
@@ -253,7 +253,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 
 1. **リポジトリをクローン：**
    ```bash
-   git clone https://github.com/yourusername/obs-sei-stamper.git
+   git clone https://github.com/ikenainanodesu/obs-sei-stamper.git
    cd obs-sei-stamper
    ```
 
@@ -346,9 +346,9 @@ GPL-2.0 License - OBS Studioのライセンスに準拠
 
 ## サポート
 
-- **問題**: [GitHub Issues](https://github.com/yourusername/obs-sei-stamper/issues)
-- **ディスカッション**: [GitHub Discussions](https://github.com/yourusername/obs-sei-stamper/discussions)
-- **ドキュメント**: [Wiki](https://github.com/yourusername/obs-sei-stamper/wiki)
+- **問題**: [GitHub Issues](https://github.com/ikenainanodesu/obs-sei-stamper/issues)
+- **ディスカッション**: [GitHub Discussions](https://github.com/ikenainanodesu/obs-sei-stamper/discussions)
+- **ドキュメント**: [Wiki](https://github.com/ikenainanodesu/obs-sei-stamper/wiki)
 
 ---
 

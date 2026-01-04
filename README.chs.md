@@ -41,7 +41,7 @@ OBS SEI Stamper 是一个 OBS Studio 插件，通过在视频流中嵌入 NTP �
 
 ### 快速安装（推荐）
 
-从 [Releases](https://github.com/yourusername/obs-sei-stamper/releases) 页面下载最新版本。
+从 [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) 页面下载最新版本。
 
 发布包包含：
 - `obs-sei-stamper.dll` - 主插件
@@ -55,7 +55,7 @@ OBS SEI Stamper 是一个 OBS Studio 插件，通过在视频流中嵌入 NTP �
 
 ### 手动安装步骤
 
-1. **从 [Releases](https://github.com/yourusername/obs-sei-stamper/releases) 页面下载发布包**
+1. **从 [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) 页面下载发布包**
 
 2. **复制到 OBS 插件目录：**
    ```powershell
@@ -252,7 +252,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 
 1. **克隆仓库：**
    ```bash
-   git clone https://github.com/yourusername/obs-sei-stamper.git
+   git clone https://github.com/ikenainanodesu/obs-sei-stamper.git
    cd obs-sei-stamper
    ```
 
@@ -345,9 +345,9 @@ GPL-2.0 License - 遵循 OBS Studio 许可
 
 ## 支持
 
-- **问题反馈**：[GitHub Issues](https://github.com/yourusername/obs-sei-stamper/issues)
-- **讨论**：[GitHub Discussions](https://github.com/yourusername/obs-sei-stamper/discussions)
-- **文档**：[Wiki](https://github.com/yourusername/obs-sei-stamper/wiki)
+- **问题反馈**：[GitHub Issues](https://github.com/ikenainanodesu/obs-sei-stamper/issues)
+- **讨论**：[GitHub Discussions](https://github.com/ikenainanodesu/obs-sei-stamper/discussions)
+- **文档**：[Wiki](https://github.com/ikenainanodesu/obs-sei-stamper/wiki)
 
 ---
 
