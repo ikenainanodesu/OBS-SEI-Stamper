@@ -52,6 +52,7 @@ typedef struct qsv_encoder {
   uint64_t last_ntp_sync_time;
   ntp_timestamp_t current_ntp_time;
   bool ntp_enabled;
+  uint32_t ntp_sync_interval_ms; /* NTP同步间隔（毫秒），默认60000ms */
 
 } qsv_encoder_t;
 

@@ -466,16 +466,29 @@ bool decode_and_extract_sei(sei_receiver_source_t *source, AVPacket *packet,
     bool should_sync = false;
     uint64_t now = os_gettime_ns();
 
-    /* 条件1: 关键帧同步 */
+    /* 条件1: 关键帧同步（但需满足最小10秒间隔，避免过于频繁） */
     bool is_keyframe =
         (av_frame->key_frame != 0) || (av_frame->flags & AV_FRAME_FLAG_KEY);
-    if (is_keyframe) {
-      should_sync = true;
-      receiver_log(LOG_DEBUG, source, "Keyframe detected, triggering NTP sync");
+
+    /* 计算距离上次同步的时间*/
+    uint64_t time_since_last_sync = 0;
+    if (source->last_ntp_sync_time > 0) {
+      time_since_last_sync = now - source->last_ntp_sync_time;
     }
 
-    /* 条件2: 时间差检测 (50ms)  */
-    if (!should_sync && source->ntp_client.is_synced) {
+    /* 使用用户配置的最小同步间隔 */
+    uint64_t min_interval_ns =
+        (uint64_t)source->ntp_sync_interval_ms * 1000000ULL;
+
+    if (is_keyframe && time_since_last_sync >= min_interval_ns) {
+      should_sync = true;
+      receiver_log(LOG_DEBUG, source,
+                   "Keyframe + interval met, triggering NTP sync");
+    }
+
+    /* 条件2: 时间差检测 (同样受最小间隔限制) */
+    if (!should_sync && source->ntp_client.is_synced &&
+        time_since_last_sync >= min_interval_ns) {
       /* 计算当前帧的 NTP 时间戳对应的纳秒 */
       uint64_t frame_ntp_ns =
           ((uint64_t)frame_out->ntp_time.seconds * 1000000000ULL) +
@@ -493,8 +506,10 @@ bool decode_and_extract_sei(sei_receiver_source_t *source, AVPacket *packet,
         if (time_diff < 0)
           time_diff = -time_diff; // 取绝对值
 
-        /* 如果时间差超过 50ms (50,000,000 纳秒) */
-        if (time_diff > 50000000LL) {
+        /* 使用配置的漂移阈值 */
+        uint64_t drift_threshold_ns =
+            (uint64_t)source->ntp_drift_threshold_ms * 1000000ULL;
+        if (time_diff > (int64_t)drift_threshold_ns) {
           should_sync = true;
           receiver_log(LOG_DEBUG, source,
                        "Time drift detected: %lld ms, triggering NTP sync",
@@ -505,8 +520,11 @@ bool decode_and_extract_sei(sei_receiver_source_t *source, AVPacket *packet,
 
     /* 执行 NTP 同步 */
     if (should_sync) {
+      /* 无论成功与否，都更新时间，防止在网络故障时每帧都重试导致卡顿 (Backoff)
+       */
+      source->last_ntp_sync_time = now;
+
       if (ntp_client_sync(&source->ntp_client)) {
-        source->last_ntp_sync_time = now;
         receiver_log(LOG_INFO, source, "NTP synchronized (syncs: %u)",
                      source->ntp_client.sync_count);
       } else {
@@ -775,6 +793,17 @@ static void *receiver_source_create(obs_data_t *settings,
   }
 
   ctx->ntp_enabled = obs_data_get_bool(settings, "ntp_enabled");
+  ctx->ntp_drift_threshold_ms =
+      (uint32_t)obs_data_get_int(settings, "ntp_drift_threshold");
+  if (ctx->ntp_drift_threshold_ms == 0) {
+    ctx->ntp_drift_threshold_ms = 50; // 默认 50ms
+  }
+
+  ctx->ntp_sync_interval_ms =
+      (uint32_t)obs_data_get_int(settings, "ntp_sync_interval");
+  if (ctx->ntp_sync_interval_ms == 0) {
+    ctx->ntp_sync_interval_ms = 10000; // 默认 10秒 (为了安全)
+  }
 
   /* 初始化统计和错误恢复 */
   ctx->last_stats_update_time = 0;
@@ -856,6 +885,9 @@ static void receiver_source_defaults(obs_data_t *settings) {
   obs_data_set_default_int(settings, "ntp_port", 123);
   obs_data_set_default_bool(settings, "ntp_enabled", true);
   obs_data_set_default_string(settings, "hw_decoder", "none");
+  obs_data_set_default_int(settings, "ntp_drift_threshold", 50); // 默认 50ms
+  obs_data_set_default_int(settings, "ntp_sync_interval",
+                           10000); // 默认 10000ms (10秒)
 }
 
 /* 获取属性 */
@@ -897,6 +929,19 @@ static obs_properties_t *receiver_source_properties(void *data) {
 
   obs_properties_add_int(props, "ntp_port", obs_module_text("NTPPort"), 1,
                          65535, 1);
+
+  obs_properties_add_int(props, "ntp_drift_threshold",
+                         "NTP Drift Threshold (ms)", 10, 1000,
+                         10); // 10ms 到 1000ms
+
+  obs_properties_add_int(props, "ntp_sync_interval", "NTP Sync Interval (ms)",
+                         100, 3600000, 100); // 100ms 到 1小时
+
+  /* 警告说明 */
+  obs_properties_add_text(props, "ntp_interval_warning",
+                          "⚠️ Warning: Setting interval < 1000ms may cause "
+                          "stuttering on slow networks.",
+                          OBS_TEXT_INFO);
 
   /* 状态信息(只读) */
   obs_properties_add_text(props, "status", obs_module_text("Status"),

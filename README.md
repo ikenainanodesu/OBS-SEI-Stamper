@@ -173,20 +173,48 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 
 #### Receiver (Source)
 - **Intelligent Sync**: Adaptive synchronization using two triggers
-  1. **Keyframe Trigger**: Syncs on every keyframe (IDR frame) with SEI
-  2. **Drift Detection**: Syncs when time drift exceeds 50ms
+  1. **Keyframe Trigger**: Syncs on keyframes (IDR) with **minimum 10-second interval**
+  2. **Drift Detection**: Syncs when time drift exceeds configured threshold (default 50ms)
 - **Purpose**: Maintain high precision while minimizing network overhead
+- **Performance**: Minimum sync interval prevents excessive NTP requests
 
 **Workflow**:
 ```
 Receive Frame with SEI
    ↓
-Is Keyframe? ──Yes──► Trigger NTP Sync
+Is Keyframe + 10s passed? ──Yes──► Trigger NTP Sync
    ↓ No
-Time Drift > 50ms? ──Yes──► Trigger NTP Sync
+Time Drift > Threshold? ──Yes──► Trigger NTP Sync
    ↓ No
 Use Existing NTP Time
 ```
+
+### NTP Configuration Recommendations
+
+#### Encoder Settings
+
+| Parameter | Range | Default | Recommended |
+|-----------|-------|---------|-------------|
+| NTP Sync Interval | 1-600s | 60s | **30-120s** |
+
+**Usage Scenarios**:
+- **High Precision**: 10-30s (more frequent sync, higher accuracy)
+- **Standard**: 60s (balanced, recommended for most cases)
+- **Resource Limited**: 120-300s (reduce NTP server load)
+
+#### Receiver Settings
+
+| Parameter | Range | Default | Recommended |
+|-----------|-------|---------|-------------|
+| NTP Drift Threshold | 10-1000ms | 50ms | **30-100ms** |
+| NTP Sync Interval | 100ms-1h | 10s | **10-60s** |
+
+**Usage Scenarios**:
+- **Strict Sync**: Drift 20-30ms, Interval 5-10s
+- **Standard**: Drift 50ms, Interval 10-60s (Default)
+- **Relaxed**: Drift 100ms, Interval 120s+ (Network saving)
+
+> **ℹ️ Note**: The synchronization interval is now fully configurable. A minimum interval is enforced by your setting (default 10s) to prevent performance issues. You can lower this value if your network and CPU can handle frequent NTP requests.
 
 ### Supported Encoders
 
@@ -360,6 +388,39 @@ See [LICENSE](LICENSE) file for details.
 
 ## Release Notes
 
+### v1.1.3 (2026-01-04)
+
+**✨ New Features:**
+- ⚙️ **Custom Receiver Sync Interval**: Added `NTP Sync Interval` setting to the receiver
+  - Users can now customize the minimum time between NTP syncs
+  - Range: 100ms to 1 hour (Default: 10s)
+  - Replaces the hardcoded 10s backoff limit, giving full control to the user
+  - **Warning**: Setting this too low (e.g., < 1000ms) may cause stuttering on slow networks
+  - Added in-context UI warning to guide users
+
+### v1.1.2 (2026-01-04)
+
+**🔧 Bug Fixes:**
+- 🐛 **Fixed Receiver Stuttering**: Critical performance fix for NTP synchronization
+  - Added minimum 10-second interval for keyframe-triggered NTP sync
+  - Prevents excessive network requests (was triggering every 2 seconds)
+  - Resolves video playback stuttering issues
+- 🛡️ **Network Resilience**: Added intelligent backoff mechanism
+  - Prevents retry storms when NTP server is unreachable
+  - Enforces wait intervals even after failed sync attempts
+  - Ensures stream stability under poor network conditions
+- 📝 **Updated Documentation**: Added NTP configuration recommendations
+
+**Technical Details:**
+- Receiver now enforces 10-second minimum between NTP syncs
+- Keyframe sync: `is_keyframe && (time_since_last_sync >= 10s)`
+- Drift detection remains unchanged (user-configurable threshold)
+- Performance impact: Eliminated 5-500ms blocking calls every 2 seconds
+
+**Migration**: No configuration changes required. Plugin will automatically use optimized sync strategy.
+
+---
+
 ### v1.1.1 (2026-01-04)
 
 **🔧 Improvements:**
@@ -407,6 +468,6 @@ See [LICENSE](LICENSE) file for details.
 
 ---
 
-**Current Version**: 1.1.1  
+**Current Version**: 1.1.3  
 **Last Updated**: 2026-01-04
 

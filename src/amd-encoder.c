@@ -141,6 +141,10 @@ static void *amd_create(obs_data_t *settings, obs_encoder_t *encoder) {
   const char *ntp_server = obs_data_get_string(settings, "ntp_server");
   ntp_client_init(&enc->ntp_client, ntp_server, 123);
   enc->ntp_enabled = true;
+  enc->ntp_sync_interval_ms =
+      (uint32_t)obs_data_get_int(settings, "ntp_sync_interval");
+  if (enc->ntp_sync_interval_ms == 0)
+    enc->ntp_sync_interval_ms = 60000; // 默认 60 秒
 
   encoder_log(LOG_INFO, enc, "Creating AMD AMF encoder");
 
@@ -281,10 +285,12 @@ static bool amd_encode(void *data, struct encoder_frame *frame,
 
   /* NTP 时间更新 */
   uint64_t now = os_gettime_ns();
+  uint64_t sync_interval_ns = (uint64_t)enc->ntp_sync_interval_ms * 1000000ULL;
   if (enc->last_ntp_sync_time == 0 ||
-      (now - enc->last_ntp_sync_time) > 60000000000ULL) {
-    if (ntp_client_sync(&enc->ntp_client))
-      enc->last_ntp_sync_time = now;
+      (now - enc->last_ntp_sync_time) > sync_interval_ns) {
+    /* Always update last_sync_time to avoid retry storm on failure */
+    enc->last_ntp_sync_time = now;
+    ntp_client_sync(&enc->ntp_client);
   }
   ntp_client_get_time(&enc->ntp_client, &enc->current_ntp_time);
 
@@ -343,6 +349,7 @@ static void amd_get_defaults(obs_data_t *settings) {
   obs_data_set_default_string(settings, "preset", "balanced");
   obs_data_set_default_string(settings, "profile", "high");
   obs_data_set_default_string(settings, "ntp_server", "time.windows.com");
+  obs_data_set_default_int(settings, "ntp_sync_interval", 60000); // 60 秒
 }
 
 /* 属性 */
@@ -363,6 +370,8 @@ static obs_properties_t *amd_properties(void *unused) {
 
   obs_properties_add_text(props, "profile", "Profile", OBS_TEXT_DEFAULT);
   obs_properties_add_text(props, "ntp_server", "NTP Server", OBS_TEXT_DEFAULT);
+  obs_properties_add_int(props, "ntp_sync_interval", "NTP Sync Interval (ms)",
+                         1000, 600000, 1000); // 1秒 到 10分钟
 
   return props;
 }
