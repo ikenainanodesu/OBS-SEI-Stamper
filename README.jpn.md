@@ -221,7 +221,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 1. **ビルドスクリプトを実行：**
    ```powershell
    # プロジェクトディレクトリに移動
-   cd obs-sei-stamper
+   cd sei-stamper
    
    # 自動ビルドスクリプトを実行
    .\build_and_install.bat
@@ -243,7 +243,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 1. **リポジトリをクローン：**
    ```bash
    git clone https://github.com/ikenainanodesu/sei-stamper.git
-   cd obs-sei-stamper
+   cd sei-stamper
    ```
 
 2. **CMakeを設定：**

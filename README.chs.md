@@ -220,7 +220,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 1. **运行编译脚本：**
    ```powershell
    # 进入项目目录
-   cd obs-sei-stamper
+   cd sei-stamper
    
    # 运行自动编译脚本
    .\build_and_install.bat
@@ -240,7 +240,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 1. **克隆仓库：**
    ```bash
    git clone https://github.com/ikenainanodesu/sei-stamper.git
-   cd obs-sei-stamper
+   cd sei-stamper
    ```
 
 2. **配置 CMake：**
