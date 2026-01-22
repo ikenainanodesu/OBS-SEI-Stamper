@@ -32,9 +32,9 @@ OBS SEI Stamper 是一个 OBS Studio 插件，通过在视频流中嵌入 NTP �
 
 ### 演示视频
 
-📺 **[在 YouTube 上观看演示视频](https://youtu.be/9aJCHxzy-ME)** *(中文讲解)*
+📺 **[在 YouTube 上观看演示视频](https://youtu.be/JhizRlUpSlg)**
 
-演示使用OBS输出4路相同设置的SRT视频，局域网接收这4路SRT。原生的OBS媒体源无法做到同步，对比本插件，可以做到大概±1帧的同步。
+演示使用OBS输出4路相同设置的SRT视频，局域网接收这4路SRT。原生的OBS媒体源无法做到同步，对比本插件，可以做到大概±2帧的同步。
 
 ---
 
