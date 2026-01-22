@@ -1,5 +1,5 @@
 /******************************************************************************
-    OBS SEI Stamper - Unified Encoder Implementation
+    SEI Stamper - Unified Encoder Implementation
     Copyright (C) 2026
 
     This program is free software: you can redistribute it and/or modify

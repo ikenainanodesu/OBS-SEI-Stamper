@@ -1,5 +1,5 @@
 /******************************************************************************
-    OBS SEI Stamper Plugin
+    SEI Stamper Plugin
     Copyright (C) 2026
 
     This program is free software: you can redistribute it and/or modify
@@ -17,7 +17,7 @@
 #include <util/platform.h>
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE("obs-sei-stamper", "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("sei-stamper", "en-US")
 
 // 模块描述
 MODULE_EXPORT const char *obs_module_description(void) {
@@ -26,7 +26,7 @@ MODULE_EXPORT const char *obs_module_description(void) {
 }
 
 // 模块名称
-MODULE_EXPORT const char *obs_module_name(void) { return "OBS SEI Stamper"; }
+MODULE_EXPORT const char *obs_module_name(void) { return "SEI Stamper"; }
 
 // 前向声明 - 统一编码器（三个独立的codec版本）
 extern struct obs_encoder_info unified_encoder_info_h264;
@@ -38,7 +38,7 @@ extern struct obs_source_info sei_receiver_source_info;
 
 // 模块加载
 bool obs_module_load(void) {
-  blog(LOG_INFO, "OBS SEI Stamper Plugin loaded");
+  blog(LOG_INFO, "SEI Stamper Plugin loaded");
 
   /* 注册三个独立的SEI Stamper编码器（每种codec一个） */
   blog(LOG_INFO, "Registering SEI Stamper H.264 encoder");

@@ -1,9 +1,9 @@
 @echo off
-REM OBS SEI Stamper Plugin - Automated Build and Install Script
+REM SEI Stamper Plugin - Automated Build and Install Script
 REM This script automates the CMake build process and installs the plugin to the output directory
 
 echo ================================================
-echo OBS SEI Stamper Plugin - Build and Install
+echo SEI Stamper Plugin - Build and Install
 echo ================================================
 echo.
 
@@ -81,7 +81,7 @@ echo WARNING: SRT library not found, receiver may not work
 REM Copy locale files
 echo.
 echo Copying locale files...
-xcopy /E /I /Y ..\data\locale ..\out\obs-studio\data\obs-plugins\obs-sei-stamper\locale >nul
+xcopy /E /I /Y ..\data\locale ..\out\obs-studio\data\obs-plugins\sei-stamper\locale >nul
 if %ERRORLEVEL% neq 0 (
     echo WARNING: Failed to copy locale files
 ) else (
@@ -97,7 +97,7 @@ echo Build Complete!
 echo ================================================
 echo.
 echo Output directory: %CD%\out\obs-studio
-echo Plugin DLL: %CD%\out\obs-studio\obs-plugins\64bit\obs-sei-stamper.dll
+echo Plugin DLL: %CD%\out\obs-studio\obs-plugins\64bit\sei-stamper.dll
 echo.
 echo To install to OBS Studio:
 echo   1. Copy contents of out\obs-studio\ to C:\Program Files\obs-studio

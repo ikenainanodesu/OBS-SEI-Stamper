@@ -42,10 +42,10 @@ SEI Stamper 是一个 OBS Studio 插件，通过在视频流中嵌入 NTP 时间
 
 ### 快速安装（推荐）
 
-从 [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) 页面下载最新版本。
+从 [Releases](https://github.com/ikenainanodesu/sei-stamper/releases) 页面下载最新版本。
 
 发布包包含：
-- `obs-sei-stamper.dll` - 主插件
+- `sei-stamper.dll` - 主插件
 - `srt.dll` - 接收端功能所需的 SRT 库
 - 多语言支持的本地化文件
 
@@ -56,12 +56,12 @@ SEI Stamper 是一个 OBS Studio 插件，通过在视频流中嵌入 NTP 时间
 
 ### 手动安装步骤
 
-1. **从 [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) 页面下载发布包**
+1. **从 [Releases](https://github.com/ikenainanodesu/sei-stamper/releases) 页面下载发布包**
 
 2. **复制到 OBS 插件目录：**
    ```powershell
    # 复制插件 DLL
-   Copy-Item obs-sei-stamper.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
+   Copy-Item sei-stamper.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
    
    # 复制 SRT 库
    Copy-Item srt.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
@@ -71,11 +71,11 @@ SEI Stamper 是一个 OBS Studio 插件，通过在视频流中嵌入 NTP 时间
    ```powershell
    # 创建目录
    New-Item -ItemType Directory -Force `
-       "C:\Program Files\obs-studio\data\obs-plugins\obs-sei-stamper\locale"
+        "C:\Program Files\obs-studio\data\obs-plugins\sei-stamper\locale"
    
    # 复制语言文件
    Copy-Item data\locale\* `
-       "C:\Program Files\obs-studio\data\obs-plugins\obs-sei-stamper\locale\" -Recurse
+        "C:\Program Files\obs-studio\data\obs-plugins\sei-stamper\locale\" -Recurse
    ```
 
 4. **重启 OBS Studio**
@@ -239,7 +239,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 
 1. **克隆仓库：**
    ```bash
-   git clone https://github.com/ikenainanodesu/obs-sei-stamper.git
+   git clone https://github.com/ikenainanodesu/sei-stamper.git
    cd obs-sei-stamper
    ```
 
@@ -261,7 +261,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
    ```
 
 5. **输出文件：**
-   - 插件：`build/plugin/Release/obs-sei-stamper.dll`
+   - 插件：`build/plugin/Release/sei-stamper.dll`
    - 或使用 `out/obs-studio/` 目录结构方便安装
 
 ---
@@ -310,6 +310,14 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 2. 为复杂逻辑添加注释
 3. 彻底测试您的更改
 4. 根据需要更新文档
+
+---
+
+## 免责声明
+
+本项目的部分代码和文档是在 AI 工具的辅助下生成的。使用本软件即表示您承认并同意：
+1. 本软件按"原样"提供，没有任何形式的保证。
+2. 作者和贡献者不对因使用本插件而产生的任何损坏或数据丢失承担责任。
 
 ---
 

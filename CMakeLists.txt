@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(obs-sei-stamper VERSION 1.1.3)
+project(sei-stamper VERSION 1.2.0)
 
 # 设置C/C++标准
 set(CMAKE_C_STANDARD 11)
@@ -38,7 +38,7 @@ endif()
 
 # 源文件列表
 set(PLUGIN_SOURCES
-    src/obs-sei-stamper-plugin.c
+    src/sei-stamper-plugin.c
     src/ntp-client.c
     src/sei-handler.c
     src/sei-stamper-encoder.c
@@ -50,7 +50,7 @@ set(PLUGIN_SOURCES
 )
 
 # 创建插件模块
-add_library(obs-sei-stamper MODULE
+add_library(sei-stamper MODULE
     ${PLUGIN_SOURCES}
 )
 
@@ -94,7 +94,7 @@ else()
 endif()
 
 # 包含目录（在所有变量设置后）
-target_include_directories(obs-sei-stamper PRIVATE
+target_include_directories(sei-stamper PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${LIBOBS_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/obs-studio-master/build/config
@@ -116,7 +116,7 @@ if(SRT_LIBRARY)
     # SRT头文件
     set(SRT_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/srt/srtcore")
     # 添加SRT头文件路径
-    target_include_directories(obs-sei-stamper PRIVATE ${SRT_INCLUDE_DIRS})
+    target_include_directories(sei-stamper PRIVATE ${SRT_INCLUDE_DIRS})
 else()
     message(WARNING "SRT library not found, receiver functionality will be limited")
     set(SRT_LIBRARIES "")  # 设为空而不是NOTFOUND
@@ -124,7 +124,7 @@ else()
 endif()
 
 # 链接库
-target_link_libraries(obs-sei-stamper
+target_link_libraries(sei-stamper
     OBS::libobs
     ws2_32  # Windows Socket库(NTP客户端需要)
     ${PTHREAD_LIBRARY}  # pthread库
@@ -132,7 +132,7 @@ target_link_libraries(obs-sei-stamper
 
 # 添加FFmpeg库（使用完整路径）
 set(FFMPEG_LIB_DIR "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/lib")
-target_link_libraries(obs-sei-stamper
+target_link_libraries(sei-stamper
     "${FFMPEG_LIB_DIR}/avcodec.lib"
     "${FFMPEG_LIB_DIR}/avformat.lib"
     "${FFMPEG_LIB_DIR}/avutil.lib"
@@ -140,7 +140,7 @@ target_link_libraries(obs-sei-stamper
 )
 
 # 添加x264库
-target_link_libraries(obs-sei-stamper
+target_link_libraries(sei-stamper
     "${X264_LIBRARY}"
 )
 
@@ -150,8 +150,8 @@ set(VPL_LIBRARY "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23
 
 if(EXISTS "${VPL_LIBRARY}")
     message(STATUS "Found VPL library: ${VPL_LIBRARY}")
-    target_include_directories(obs-sei-stamper PRIVATE "${VPL_INCLUDE_DIR}")
-    target_link_libraries(obs-sei-stamper "${VPL_LIBRARY}")
+    target_include_directories(sei-stamper PRIVATE "${VPL_INCLUDE_DIR}")
+    target_link_libraries(sei-stamper "${VPL_LIBRARY}")
     add_definitions(-DENABLE_VPL)
 else()
     message(WARNING "VPL library not found, Intel QuickSync (Native) will be disabled")
@@ -165,28 +165,28 @@ message(STATUS "Enabled NVENC and AMD encoders (via FFmpeg)")
 
 # 如果找到SRT库，才链接
 if(SRT_LIBRARY)
-    target_link_libraries(obs-sei-stamper ${SRT_LIBRARIES})
+    target_link_libraries(sei-stamper ${SRT_LIBRARIES})
 endif()
 
 # 设置输出目录
-set_target_properties(obs-sei-stamper PROPERTIES
+set_target_properties(sei-stamper PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugin"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugin"
 )
 
 # 安装规则
-install(TARGETS obs-sei-stamper
+install(TARGETS sei-stamper
     LIBRARY DESTINATION obs-plugins/64bit
     RUNTIME DESTINATION obs-plugins/64bit
 )
 
 # 安装数据文件(本地化等)
 install(DIRECTORY data/
-    DESTINATION data/obs-plugins/obs-sei-stamper
+    DESTINATION data/obs-plugins/sei-stamper
 )
 
 message(STATUS "=================================================")
-message(STATUS "OBS SEI Stamper Plugin Configuration")
+message(STATUS "SEI Stamper Plugin Configuration")
 message(STATUS "=================================================")
 message(STATUS "OBS Directory: ${OBS_DIR}")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")

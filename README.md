@@ -43,10 +43,10 @@ This demonstration shows OBS sending 4 SRT streams with identical settings over 
 
 ### Quick Install (Recommended)
 
-Download the latest release from [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) page.
+Download the latest release from [Releases](https://github.com/ikenainanodesu/sei-stamper/releases) page.
 
 The release package includes:
-- `obs-sei-stamper.dll` - Main plugin
+- `sei-stamper.dll` - Main plugin
 - `srt.dll` - SRT library for receiver functionality
 - Locale files for multi-language support
 
@@ -57,12 +57,12 @@ The release package includes:
 
 ### Manual Install Steps
 
-1. **Download the release package** from the [Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases) page
+1. **Download the release package** from the [Releases](https://github.com/ikenainanodesu/sei-stamper/releases) page
 
 2. **Copy to OBS plugins directory:**
    ```powershell
    # Copy plugin DLL
-   Copy-Item obs-sei-stamper.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
+   Copy-Item sei-stamper.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
    
    # Copy SRT library
    Copy-Item srt.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
@@ -72,11 +72,11 @@ The release package includes:
    ```powershell
    # Create directory
    New-Item -ItemType Directory -Force `
-       "C:\Program Files\obs-studio\data\obs-plugins\obs-sei-stamper\locale"
+       "C:\Program Files\obs-studio\data\obs-plugins\sei-stamper\locale"
    
    # Copy locale files
    Copy-Item data\locale\* `
-       "C:\Program Files\obs-studio\data\obs-plugins\obs-sei-stamper\locale\" -Recurse
+       "C:\Program Files\obs-studio\data\obs-plugins\sei-stamper\locale\" -Recurse
    ```
 
 4. **Restart OBS Studio**
@@ -182,6 +182,14 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 | SEI Stamper (H.264) | H.264/AVC | Intel, NVIDIA, AMD | ✅ Verified |
 | SEI Stamper (H.265) | H.265/HEVC | Intel, NVIDIA, AMD | ✅ Verified (Rec.)|
 | SEI Stamper (AV1) | AV1 | Intel, NVIDIA, AMD | ⚠️ (OBS SRT limit)|
+
+---
+
+## Disclaimer
+
+Portions of this project's code and documentation were generated with the assistance of AI tools. By using this software, you acknowledge and agree that:
+1. The software is provided "as is", without warranty of any kind.
+2. The authors and contributors shall not be liable for any damages or data loss arising from the use of this plugin.
 
 ---
 

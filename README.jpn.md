@@ -43,10 +43,10 @@ SEI Stamperは、SEI（補足拡張情報）を使用してビデオストリー
 
 ### クイックインストール（推奨）
 
-[Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases)ページから最新リリースをダウンロードしてください。
+[Releases](https://github.com/ikenainanodesu/sei-stamper/releases)ページから最新リリースをダウンロードしてください。
 
 リリースパッケージには以下が含まれます：
-- `obs-sei-stamper.dll` - メインプラグイン
+- `sei-stamper.dll` - メインプラグイン
 - `srt.dll` - 受信機機能用のSRTライブラリ
 - 多言語サポート用のロケールファイル
 
@@ -57,12 +57,12 @@ SEI Stamperは、SEI（補足拡張情報）を使用してビデオストリー
 
 ### 手動インストール手順
 
-1. **[Releases](https://github.com/ikenainanodesu/obs-sei-stamper/releases)ページからリリースパッケージをダウンロード**
+1. **[Releases](https://github.com/ikenainanodesu/sei-stamper/releases)ページからリリースパッケージをダウンロード**
 
 2. **OBSプラグインディレクトリにコピー：**
    ```powershell
    # プラグインDLLをコピー
-   Copy-Item obs-sei-stamper.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
+   Copy-Item sei-stamper.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
    
    # SRTライブラリをコピー
    Copy-Item srt.dll "C:\Program Files\obs-studio\obs-plugins\64bit\"
@@ -72,11 +72,11 @@ SEI Stamperは、SEI（補足拡張情報）を使用してビデオストリー
    ```powershell
    # ディレクトリを作成
    New-Item -ItemType Directory -Force `
-       "C:\Program Files\obs-studio\data\obs-plugins\obs-sei-stamper\locale"
+        "C:\Program Files\obs-studio\data\obs-plugins\sei-stamper\locale"
    
    # ロケールファイルをコピー
    Copy-Item data\locale\* `
-       "C:\Program Files\obs-studio\data\obs-plugins\obs-sei-stamper\locale\" -Recurse
+        "C:\Program Files\obs-studio\data\obs-plugins\sei-stamper\locale\" -Recurse
    ```
 
 4. **OBS Studioを再起動**
@@ -242,7 +242,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 
 1. **リポジトリをクローン：**
    ```bash
-   git clone https://github.com/ikenainanodesu/obs-sei-stamper.git
+   git clone https://github.com/ikenainanodesu/sei-stamper.git
    cd obs-sei-stamper
    ```
 
@@ -264,7 +264,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
    ```
 
 5. **出力ファイル：**
-   - プラグイン：`build/plugin/Release/obs-sei-stamper.dll`
+   - プラグイン：`build/plugin/Release/sei-stamper.dll`
    - または簡単インストール用の`out/obs-studio/`ディレクトリ構造を使用
 
 ---
@@ -313,6 +313,14 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 2. 複雑なロジックにはコメントを追加
 3. 変更を徹底的にテスト
 4. 必要に応じてドキュメントを更新
+
+---
+
+## 免責事項
+
+このプロジェクトのコードとドキュメントの一部は、AIツールの支援を受けて生成されました。本ソフトウェアを使用することにより、以下の事項に同意したものとみなされます：
+1. 本ソフトウェアは「現状のまま」提供され、いかなる種類の保証もありません。
+2. 著者および貢献者は、本プラグインの使用に起因するいかなる損害やデータの損失についても責任を負いません。
 
 ---
 
