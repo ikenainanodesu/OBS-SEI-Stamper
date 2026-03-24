@@ -74,7 +74,8 @@ typedef struct sei_receiver_source {
   bool hw_decode_enabled;   /* 硬件解码是否启用 */
 
   /* 编码格式 */
-  char codec_type[16]; /* 编码格式类型 (h264/h265/av1) */
+  char codec_format[16]; /* 用户选择的编码格式 (auto/h264/h265/av1) */
+  char codec_type[16];   /* 实际使用的编码格式类型 (h264/h265/av1) */
 
   /* NTP同步 */
   ntp_client_t ntp_client;         /* NTP客户端 */

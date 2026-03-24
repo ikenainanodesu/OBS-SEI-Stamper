@@ -50,40 +50,47 @@ static bool qsv_build_ntp_sei_payload(int64_t pts, ntp_timestamp_t *ntp_time,
 }
 
 static bool qsv_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
-                                   int payload_type, uint8_t **nal_unit,
-                                   size_t *nal_size) {
-  /* Standard H.264 SEI NAL construction */
-  /* Start Code (00 00 00 01) + NAL Header (SEI=6) */
-  /* Payload Type + Payload Size + Payload + Trailing Bits */
-
-  // Simplified RBSP handling (no emulation prevention for simplicity, though
-  // required for robust) For fixed UUIDs and Timestamps it's usually fine, but
-  // let's be careful.
-  size_t rbsp_size = 0;
-
-  // Payload Type
-  uint8_t type_byte = 5; // User Data Unregistered
-  // Payload Size
-  // If size < 255.
+                                   int payload_type, int codec_type,
+                                   uint8_t **nal_unit, size_t *nal_size) {
+  /* 根据codec类型构建SEI NAL单元 */
+  /* H.264: 1-byte NAL header (0x06)
+   * H.265: 2-byte NAL header (0x4E 0x01 for PREFIX_SEI_NUT)
+   */
 
   size_t size_bytes = 1;
   if (payload_size >= 255)
     size_bytes += (payload_size / 255);
 
-  size_t total_size =
-      4 + 1 + 1 + size_bytes + payload_size + 1; // +1 for trailing
+  size_t nal_header_size = (codec_type == 1) ? 2 : 1; // H.265=2, H.264=1
+  size_t total_size = 4 + nal_header_size + 1 + size_bytes + payload_size + 1;
+
   *nal_unit = bmalloc(total_size);
   if (!*nal_unit)
     return false;
 
   uint8_t *p = *nal_unit;
-  // Start Code
+
+  // Start Code (Annex B)
   *p++ = 0x00;
   *p++ = 0x00;
   *p++ = 0x00;
   *p++ = 0x01;
-  // NAL Header (Forbidden=0, RefIdc=0, Type=SEI(6))
-  *p++ = 0x06;
+
+  // NAL Header
+  if (codec_type == 1) {
+    // H.265/HEVC: 2-byte NAL header
+    // byte 0: forbidden(1) + nal_unit_type(6) + nuh_layer_id(6 bits, high)
+    // byte 1: nuh_layer_id(3 bits, low) + nuh_temporal_id_plus1(3)
+    // PREFIX_SEI_NUT = 39 (0x27)
+    // (0 << 7) | (39 << 1) | (0 >> 5) = 0x4E
+    *p++ = 0x4E; // forbidden=0, type=39(PREFIX_SEI), layer_id[5:0]=0
+    *p++ = 0x01; // layer_id[2:0]=0, temporal_id_plus1=1
+  } else {
+    // H.264/AVC: 1-byte NAL header
+    // forbidden_zero_bit(1) + nal_ref_idc(2) + nal_unit_type(5)
+    // SEI = 6
+    *p++ = 0x06; // forbidden=0, ref_idc=0, type=6(SEI)
+  }
 
   // Payload Type (User Data Unregistered = 5)
   *p++ = 0x05;
@@ -105,6 +112,415 @@ static bool qsv_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
 
   *nal_size = (p - *nal_unit);
   return true;
+}
+
+/* ------------------------------------------------------------------------- */
+/* NAL Unit Extraction Helpers */
+/* ------------------------------------------------------------------------- */
+
+/* NAL Unit 类型定义 */
+#define H264_NAL_SPS 7
+#define H264_NAL_PPS 8
+#define H265_NAL_VPS 32
+#define H265_NAL_SPS 33
+#define H265_NAL_PPS 34
+
+/* 查找 NAL 单元起始码 */
+static const uint8_t *find_nal_start_code(const uint8_t *data, size_t size,
+                                          size_t *start_code_size) {
+  if (size < 3)
+    return NULL;
+
+  for (size_t i = 0; i < size - 2; i++) {
+    if (data[i] == 0 && data[i + 1] == 0) {
+      if (data[i + 2] == 1) {
+        *start_code_size = 3;
+        return data + i;
+      } else if (i < size - 3 && data[i + 2] == 0 && data[i + 3] == 1) {
+        *start_code_size = 4;
+        return data + i;
+      }
+    }
+  }
+  return NULL;
+}
+
+/* 从 H.264 码流中提取 SPS/PPS */
+static bool extract_h264_params(uint8_t *data, size_t size, uint8_t **sps,
+                                size_t *sps_size, uint8_t **pps,
+                                size_t *pps_size) {
+  *sps = NULL;
+  *pps = NULL;
+  *sps_size = 0;
+  *pps_size = 0;
+
+  const uint8_t *current = data;
+  size_t remaining = size;
+
+  while (remaining > 0) {
+    size_t sc_size = 0;
+    const uint8_t *nal_start =
+        find_nal_start_code(current, remaining, &sc_size);
+
+    if (!nal_start)
+      break;
+
+    const uint8_t *nal_data = nal_start + sc_size;
+    size_t nal_remaining = remaining - (nal_data - current);
+
+    if (nal_remaining < 1)
+      break;
+
+    uint8_t nal_type = nal_data[0] & 0x1F;
+
+    // 查找下一个起始码以确定当前 NAL 的长度
+    size_t next_sc_size = 0;
+    const uint8_t *next_nal =
+        find_nal_start_code(nal_data, nal_remaining, &next_sc_size);
+    size_t nal_size = next_nal ? (next_nal - nal_data) : nal_remaining;
+
+    if (nal_type == H264_NAL_SPS && !*sps) {
+      *sps_size = nal_size;
+      *sps = bmalloc(*sps_size);
+      memcpy(*sps, nal_data, *sps_size);
+    } else if (nal_type == H264_NAL_PPS && !*pps) {
+      *pps_size = nal_size;
+      *pps = bmalloc(*pps_size);
+      memcpy(*pps, nal_data, *pps_size);
+    }
+
+    if (*sps && *pps)
+      return true; // 找到了所有必需的参数集
+
+    current = nal_data + nal_size;
+    remaining = size - (current - data);
+  }
+
+  // 清理
+  if (*sps && !*pps) {
+    bfree(*sps);
+    *sps = NULL;
+    *sps_size = 0;
+  }
+
+  return (*sps && *pps);
+}
+
+/* 从 H.265 码流中提取 VPS/SPS/PPS */
+static bool extract_h265_params(uint8_t *data, size_t size, uint8_t **vps,
+                                size_t *vps_size, uint8_t **sps,
+                                size_t *sps_size, uint8_t **pps,
+                                size_t *pps_size) {
+  *vps = *sps = *pps = NULL;
+  *vps_size = *sps_size = *pps_size = 0;
+
+  const uint8_t *current = data;
+  size_t remaining = size;
+
+  while (remaining > 0) {
+    size_t sc_size = 0;
+    const uint8_t *nal_start =
+        find_nal_start_code(current, remaining, &sc_size);
+
+    if (!nal_start)
+      break;
+
+    const uint8_t *nal_data = nal_start + sc_size;
+    size_t nal_remaining = remaining - (nal_data - current);
+
+    if (nal_remaining < 2)
+      break;
+
+    // H.265 NAL 类型在第一个字节的高6位
+    uint8_t nal_type = (nal_data[0] >> 1) & 0x3F;
+
+    // 查找下一个起始码
+    size_t next_sc_size = 0;
+    const uint8_t *next_nal =
+        find_nal_start_code(nal_data, nal_remaining, &next_sc_size);
+    size_t nal_size = next_nal ? (next_nal - nal_data) : nal_remaining;
+
+    if (nal_type == H265_NAL_VPS && !*vps) {
+      *vps_size = nal_size;
+      *vps = bmalloc(*vps_size);
+      memcpy(*vps, nal_data, *vps_size);
+      blog(LOG_INFO, "[QSV Native] Found VPS: size=%zu", *vps_size);
+    } else if (nal_type == H265_NAL_SPS && !*sps) {
+      *sps_size = nal_size;
+      *sps = bmalloc(*sps_size);
+      memcpy(*sps, nal_data, *sps_size);
+      blog(LOG_INFO, "[QSV Native] Found SPS: size=%zu", *sps_size);
+    } else if (nal_type == H265_NAL_PPS && !*pps) {
+      *pps_size = nal_size;
+      *pps = bmalloc(*pps_size);
+      memcpy(*pps, nal_data, *pps_size);
+      blog(LOG_INFO, "[QSV Native] Found PPS: size=%zu", *pps_size);
+    }
+
+    if (*vps && *sps && *pps)
+      return true;
+
+    current = nal_data + nal_size;
+    remaining = size - (current - data);
+  }
+
+  // 清理
+  if (!(*vps && *sps && *pps)) {
+    blog(LOG_WARNING,
+         "[QSV Native] H.265 param extraction incomplete: VPS=%s SPS=%s PPS=%s",
+         *vps ? "YES" : "NO", *sps ? "YES" : "NO", *pps ? "YES" : "NO");
+    if (*vps) {
+      bfree(*vps);
+      *vps = NULL;
+      *vps_size = 0;
+    }
+    if (*sps) {
+      bfree(*sps);
+      *sps = NULL;
+      *sps_size = 0;
+    }
+    if (*pps) {
+      bfree(*pps);
+      *pps = NULL;
+      *pps_size = 0;
+    }
+  }
+
+  return (*vps && *sps && *pps);
+}
+
+/* 构建 H.264 AVCC extra data */
+static bool build_h264_extradata(uint8_t *sps, size_t sps_size, uint8_t *pps,
+                                 size_t pps_size, uint8_t **extradata,
+                                 size_t *extradata_size) {
+  if (!sps || sps_size < 4 || !pps)
+    return false;
+
+  *extradata_size = 5 + 1 + 2 + sps_size + 1 + 2 + pps_size;
+  *extradata = bmalloc(*extradata_size);
+
+  uint8_t *p = *extradata;
+  p[0] = 0x01;   // ConfigurationVersion
+  p[1] = sps[1]; // Profile
+  p[2] = sps[2]; // Profile Compatibility
+  p[3] = sps[3]; // Level
+  p[4] = 0xFF;   // 6 bits '111111' + 2 bits lengthSizeMinusOne
+
+  p[5] = 0xE1; // 3 bits '111' + 5 bits numOfSPS (1)
+
+  // SPS Length (Big Endian)
+  p[6] = (sps_size >> 8) & 0xFF;
+  p[7] = sps_size & 0xFF;
+  memcpy(p + 8, sps, sps_size);
+
+  p += 8 + sps_size;
+
+  p[0] = 0x01; // numOfPPS (1)
+  p[1] = (pps_size >> 8) & 0xFF;
+  p[2] = pps_size & 0xFF;
+  memcpy(p + 3, pps, pps_size);
+
+  return true;
+}
+
+/* 构建 H.265 HVCC extra data */
+static bool build_h265_extradata(uint8_t *vps, size_t vps_size, uint8_t *sps,
+                                 size_t sps_size, uint8_t *pps, size_t pps_size,
+                                 uint8_t **extradata, size_t *extradata_size) {
+  if (!vps || !sps || !pps)
+    return false;
+
+  /* HVCC 格式参考 ISO/IEC 14496-15:2017 Section 8.3.3 */
+
+  // 计算总大小: 23字节头 + 3个array(each 3 bytes + 2 bytes per NAL + NAL data)
+  *extradata_size = 23 + 3 + 2 + vps_size + // VPS array
+                    3 + 2 + sps_size +      // SPS array
+                    3 + 2 + pps_size;       // PPS array
+
+  *extradata = bzalloc(*extradata_size);
+  uint8_t *p = *extradata;
+
+  // General configuration
+  p[0] = 0x01; // configurationVersion
+
+  // H.265 NAL header: 2 bytes
+  // byte 0: forbidden_zero_bit(1) + nal_unit_type(6) + nuh_layer_id(6 bits,
+  // high) byte 1: nuh_layer_id(low 3 bits) + nuh_temporal_id_plus1(3)
+  // profile_tier_level 紧随 NAL header 之后
+
+  // 提取 profile_tier_level (跳过 NAL header 的 2 bytes)
+  if (sps_size >= 2) {
+    // general_profile_space(2) + general_tier_flag(1) + general_profile_idc(5)
+    // 保守做法：使用 Main profile (profile_idc = 1)
+    p[1] = sps_size >= 3 ? sps[2] : 0x01; // 尝试从SPS提取，否则默认Main profile
+
+    // general_profile_compatibility_flags (4 bytes)
+    // 保守做法：设置 Main profile 兼容性
+    if (sps_size >= 7) {
+      memcpy(p + 2, sps + 3, 4);
+    } else {
+      p[2] = 0x60; // Main profile compatibility
+      p[3] = 0x00;
+      p[4] = 0x00;
+      p[5] = 0x00;
+    }
+
+    // general_constraint_indicator_flags (6 bytes)
+    if (sps_size >= 13) {
+      memcpy(p + 6, sps + 7, 6);
+    } else {
+      memset(p + 6, 0, 6);
+    }
+
+    // general_level_idc
+    p[12] = sps_size >= 14 ? sps[13] : 0x5D; // Level 3.1 as default
+  } else {
+    // 如果 SPS 太小，使用安全的默认值
+    p[1] = 0x01; // Main profile
+    p[2] = 0x60; // Main profile compatibility
+    p[3] = p[4] = p[5] = 0x00;
+    memset(p + 6, 0, 6); // No constraints
+    p[12] = 0x5D;        // Level 3.1
+  }
+
+  // min_spatial_segmentation_idc (reserved + 12 bits)
+  p[13] = 0xF0;
+  p[14] = 0x00;
+
+  // parallelismType (reserved + 2 bits, 0=unknown)
+  p[15] = 0xFC;
+
+  // chromaFormat (reserved + 2 bits, 1=4:2:0)
+  p[16] = 0xFC | 0x1;
+
+  // bitDepthLumaMinus8 (reserved + 3 bits, 0=8bit)
+  p[17] = 0xF8;
+
+  // bitDepthChromaMinus8 (reserved + 3 bits, 0=8bit)
+  p[18] = 0xF8;
+
+  // avgFrameRate (16 bits, 0=unspecified)
+  p[19] = 0x00;
+  p[20] = 0x00;
+
+  // constantFrameRate(2) + numTemporalLayers(3) + temporalIdNested(1) +
+  // lengthSizeMinusOne(2) lengthSizeMinusOne = 3 表示使用 4 字节长度前缀
+  p[21] = 0x0F;
+
+  // numOfArrays (3: VPS, SPS, PPS)
+  p[22] = 0x03;
+
+  p += 23;
+
+  // VPS array
+  p[0] = 0x80 |
+         H265_NAL_VPS; // array_completeness(1) + reserved(0) + NAL_unit_type(6)
+  p[1] = 0x00;         // numNalus high byte
+  p[2] = 0x01;         // numNalus low byte (1)
+  p[3] = (vps_size >> 8) & 0xFF;
+  p[4] = vps_size & 0xFF;
+  memcpy(p + 5, vps, vps_size);
+  p += 5 + vps_size;
+
+  // SPS array
+  p[0] = 0x80 | H265_NAL_SPS;
+  p[1] = 0x00;
+  p[2] = 0x01;
+  p[3] = (sps_size >> 8) & 0xFF;
+  p[4] = sps_size & 0xFF;
+  memcpy(p + 5, sps, sps_size);
+  p += 5 + sps_size;
+
+  // PPS array
+  p[0] = 0x80 | H265_NAL_PPS;
+  p[1] = 0x00;
+  p[2] = 0x01;
+  p[3] = (pps_size >> 8) & 0xFF;
+  p[4] = pps_size & 0xFF;
+  memcpy(p + 5, pps, pps_size);
+
+  blog(LOG_INFO,
+       "[QSV Native] Built HVCC: total_size=%zu, VPS=%zu, SPS=%zu, PPS=%zu",
+       *extradata_size, vps_size, sps_size, pps_size);
+
+  return true;
+}
+
+/* ------------------------------------------------------------------------- */
+
+/* 查找H.264/H.265参数集结束位置(SPS/PPS/VPS之后的第一个非参数集NAL)
+ * 返回应该插入SEI的位置(参数集之后，第一个slice之前) */
+static size_t find_parameter_sets_end(const uint8_t *data, size_t size,
+                                      int codec_type) {
+  const uint8_t *current = data;
+  size_t remaining = size;
+  size_t last_param_end = 0;
+
+  while (remaining > 0) {
+    size_t sc_size = 0;
+    const uint8_t *nal_start =
+        find_nal_start_code(current, remaining, &sc_size);
+
+    if (!nal_start)
+      break;
+
+    const uint8_t *nal_data = nal_start + sc_size;
+    size_t nal_remaining = remaining - (nal_data - current);
+
+    if (nal_remaining < 1)
+      break;
+
+    uint8_t nal_type;
+    bool is_param_set = false;
+
+    if (codec_type == 0) { // H.264
+      nal_type = nal_data[0] & 0x1F;
+      // SPS=7, PPS=8, AUD=9
+      is_param_set = (nal_type == H264_NAL_SPS || nal_type == H264_NAL_PPS ||
+                      nal_type == 9);
+    } else if (codec_type == 1) { // H.265
+      nal_type = (nal_data[0] >> 1) & 0x3F;
+      // VPS=32, SPS=33, PPS=34, AUD=35, PREFIX_SEI=39, SUFFIX_SEI=40
+      // 只将VPS/SPS/PPS视为参数集，不包括AUD
+      // SEI应该在参数集之后、AUD和slice之前
+      is_param_set = (nal_type == H265_NAL_VPS || nal_type == H265_NAL_SPS ||
+                      nal_type == H265_NAL_PPS);
+
+      // Debug: 记录遇到的NAL类型
+      if (last_param_end == 0 || is_param_set) {
+        blog(LOG_DEBUG, "[QSV H.265] Found NAL type=%u at offset=%zu%s",
+             nal_type, (nal_data - data), is_param_set ? " (param set)" : "");
+      }
+    } else {
+      // AV1不使用NAL结构，返回0
+      return 0;
+    }
+
+    // 查找下一个起始码
+    size_t next_sc_size = 0;
+    const uint8_t *next_nal =
+        find_nal_start_code(nal_data, nal_remaining, &next_sc_size);
+
+    if (is_param_set) {
+      // 这是参数集，记录结束位置
+      if (next_nal) {
+        last_param_end = next_nal - data;
+      } else {
+        last_param_end = size;
+      }
+    } else {
+      // 遇到非参数集NAL(通常是IDR slice)，返回上一个参数集的结束位置
+      return last_param_end;
+    }
+
+    if (!next_nal)
+      break;
+
+    current = next_nal;
+    remaining = size - (current - data);
+  }
+
+  return last_param_end;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -327,65 +743,13 @@ void *qsv_encoder_create_internal(obs_data_t *settings,
   blog(LOG_INFO, "[QSV Native] Encoder Initialized: %dx%d %d kbps", enc->width,
        enc->height, enc->bitrate);
 
-  /* Extract SPS/PPS for Extra Data */
-  mfxExtCodingOptionSPSPPS spspps;
-  memset(&spspps, 0, sizeof(spspps));
-  spspps.Header.BufferId = MFX_EXTBUFF_CODING_OPTION_SPSPPS;
-  spspps.Header.BufferSz = sizeof(spspps);
+  /* Extra data 将在第一个关键帧编码后从码流提取 */
+  enc->extra_data = NULL;
+  enc->extra_data_size = 0;
+  enc->extra_data_ready = false;
 
-  uint8_t sps_buf[1024];
-  uint8_t pps_buf[1024];
-  spspps.SPSBuffer = sps_buf;
-  spspps.SPSBufSize = 1024;
-  spspps.PPSBuffer = pps_buf;
-  spspps.PPSBufSize = 1024;
-
-  mfxExtBuffer *ext_bufs[] = {(mfxExtBuffer *)&spspps};
-  mfxVideoParam par;
-  memset(&par, 0, sizeof(par));
-  par.ExtParam = ext_bufs;
-  par.NumExtParam = 1;
-
-  sts = MFXVideoENCODE_GetVideoParam(enc->session, &par);
-  if (sts == MFX_ERR_NONE) {
-    /* Construct AVCC Header */
-    /* Ref: ISO/IEC 14496-15 5.2.4.1 */
-    uint16_t sps_len = spspps.SPSBufSize;
-    uint16_t pps_len = spspps.PPSBufSize;
-
-    enc->extra_data_size = 5 + 1 + 2 + sps_len + 1 + 2 + pps_len;
-    enc->extra_data = bmalloc(enc->extra_data_size);
-
-    if (enc->extra_data && sps_len > 3) {
-      uint8_t *p = enc->extra_data;
-      p[0] = 0x01;       // ConfigurationVersion
-      p[1] = sps_buf[1]; // Profile
-      p[2] = sps_buf[2]; // Profile Compatibility
-      p[3] = sps_buf[3]; // Level
-      p[4] = 0xFF;       // 111111 + 2 bits length size minus 1 (3 -> 4 bytes)
-
-      p[5] = 0xE1; // 111 + 5 bits number of SPS (1)
-
-      // SPS Length (Big Endian)
-      p[6] = (sps_len >> 8) & 0xFF;
-      p[7] = sps_len & 0xFF;
-      memcpy(p + 8, sps_buf, sps_len);
-
-      p += 8 + sps_len;
-
-      p[0] = 0x01; // Number of PPS (1)
-      p[1] = (pps_len >> 8) & 0xFF;
-      p[2] = pps_len & 0xFF;
-      memcpy(p + 3, pps_buf, pps_len);
-
-      blog(LOG_INFO, "[QSV Native] Extradata generated: %zu bytes",
-           enc->extra_data_size);
-    } else {
-      blog(LOG_ERROR, "[QSV Native] Failed to parse SPS for extradata");
-    }
-  } else {
-    blog(LOG_WARNING, "[QSV Native] GetVideoParam(SPSPPS) failed: %d", sts);
-  }
+  blog(LOG_INFO,
+       "[QSV Native] Extra data will be extracted from first keyframe");
 
   return enc;
 }
@@ -394,6 +758,15 @@ bool qsv_encoder_encode_internal(void *data, struct encoder_frame *frame,
                                  struct encoder_packet *packet,
                                  bool *received_packet) {
   qsv_encoder_t *enc = data;
+
+  static uint64_t frame_count = 0;
+  frame_count++;
+
+  // 每30帧（约1秒）记录一次
+  if (frame_count % 30 == 1) {
+    blog(LOG_INFO, "[QSV Native] Encode called: frame #%llu, PTS=%lld",
+         frame_count, frame->pts);
+  }
 
   /* Find Free Surface */
   int nIndex = -1;
@@ -499,37 +872,180 @@ bool qsv_encoder_encode_internal(void *data, struct encoder_frame *frame,
   bool keyframe = (enc->mfxBS.FrameType & MFX_FRAMETYPE_I) ||
                   (enc->mfxBS.FrameType & MFX_FRAMETYPE_IDR);
 
+  blog(LOG_INFO, "[QSV Native] Frame encoded: FrameType=0x%x, keyframe=%s",
+       enc->mfxBS.FrameType, keyframe ? "TRUE" : "FALSE");
+
+  /* 如果是第一个关键帧且 extra_data 尚未生成，从码流中提取 */
+  if (keyframe && !enc->extra_data_ready) {
+    bool extract_success = false;
+
+    switch (enc->codec_type) {
+    case 0: { // H.264
+      uint8_t *sps = NULL, *pps = NULL;
+      size_t sps_size = 0, pps_size = 0;
+
+      if (extract_h264_params(enc->mfxBS.Data + enc->mfxBS.DataOffset,
+                              enc->mfxBS.DataLength, &sps, &sps_size, &pps,
+                              &pps_size)) {
+        if (build_h264_extradata(sps, sps_size, pps, pps_size, &enc->extra_data,
+                                 &enc->extra_data_size)) {
+          enc->extra_data_ready = true;
+          extract_success = true;
+          blog(LOG_INFO, "[QSV Native] H.264 extra data extracted (%zu bytes)",
+               enc->extra_data_size);
+        }
+        bfree(sps);
+        bfree(pps);
+      }
+      break;
+    }
+    case 1: { // H.265
+      uint8_t *vps = NULL, *sps = NULL, *pps = NULL;
+      size_t vps_size = 0, sps_size = 0, pps_size = 0;
+
+      if (extract_h265_params(enc->mfxBS.Data + enc->mfxBS.DataOffset,
+                              enc->mfxBS.DataLength, &vps, &vps_size, &sps,
+                              &sps_size, &pps, &pps_size)) {
+        if (build_h265_extradata(vps, vps_size, sps, sps_size, pps, pps_size,
+                                 &enc->extra_data, &enc->extra_data_size)) {
+          enc->extra_data_ready = true;
+          extract_success = true;
+          blog(LOG_INFO, "[QSV Native] H.265 extra data extracted (%zu bytes)",
+               enc->extra_data_size);
+        }
+        bfree(vps);
+        bfree(sps);
+        bfree(pps);
+      }
+      break;
+    }
+    case 2: { // AV1
+      blog(LOG_INFO,
+           "[QSV Native] AV1 extra data extraction not yet implemented");
+      // AV1 暂时不处理，因为 OBS SRT 对 AV1 支持有限
+      enc->extra_data_ready = true; // 标记为已处理，避免重复尝试
+      break;
+    }
+    }
+
+    if (!extract_success && enc->codec_type < 2) {
+      blog(LOG_WARNING,
+           "[QSV Native] Failed to extract extra data from keyframe");
+    }
+  }
+
   uint8_t *sei_nal = NULL;
   size_t sei_nal_size = 0;
 
   if (keyframe) {
+    blog(LOG_INFO,
+         "[QSV Native] Keyframe detected, building SEI for codec type %d",
+         enc->codec_type);
+
     uint8_t *payload = NULL;
     size_t payload_size = 0;
     if (qsv_build_ntp_sei_payload(frame->pts, &enc->current_ntp_time, &payload,
                                   &payload_size)) {
-      qsv_build_sei_nal_unit(payload, payload_size, 6, &sei_nal, &sei_nal_size);
+      qsv_build_sei_nal_unit(payload, payload_size, 6, enc->codec_type,
+                             &sei_nal, &sei_nal_size);
       bfree(payload);
 
       blog(LOG_DEBUG, "[QSV Native] Inserted SEI: PTS=%lld NTP=%u.%u Size=%zu",
            frame->pts, enc->current_ntp_time.seconds,
            enc->current_ntp_time.fraction, sei_nal_size);
     } else {
-      blog(LOG_WARNING, "[QSV Native] Failed to build NTP SEI payload");
+      blog(LOG_ERROR, "[QSV Native] Failed to build NTP SEI payload");
     }
   }
 
-  /* Copy to OBS packet */
+  /* Copy to OBS packet with correct SEI insertion position */
   size_t total_size = enc->mfxBS.DataLength + sei_nal_size;
   packet->data = bmalloc(total_size);
 
-  size_t offset = 0;
-  if (sei_nal) {
-    memcpy(packet->data, sei_nal, sei_nal_size);
-    offset += sei_nal_size;
+  const uint8_t *bitstream_data = enc->mfxBS.Data + enc->mfxBS.DataOffset;
+  size_t bitstream_size = enc->mfxBS.DataLength;
+
+  if (sei_nal && keyframe) {
+    /* 查找参数集结束位置(SPS/PPS/VPS之后) */
+    size_t param_sets_end = find_parameter_sets_end(
+        bitstream_data, bitstream_size, enc->codec_type);
+
+    if (param_sets_end > 0 && param_sets_end < bitstream_size) {
+      /* 正确顺序: 参数集 → SEI → IDR slice */
+      /* 1. 复制参数集(SPS/PPS/VPS) */
+      memcpy(packet->data, bitstream_data, param_sets_end);
+      size_t offset = param_sets_end;
+
+      /* 2. 插入SEI */
+      memcpy(packet->data + offset, sei_nal, sei_nal_size);
+      offset += sei_nal_size;
+
+      /* 3. 复制剩余数据(IDR slice等) */
+      size_t remaining = bitstream_size - param_sets_end;
+      memcpy(packet->data + offset, bitstream_data + param_sets_end, remaining);
+
+      blog(LOG_INFO,
+           "[QSV Native] %s SEI inserted after parameter sets (offset: %zu, "
+           "total: %zu)",
+           enc->codec_type == 0   ? "H.264"
+           : enc->codec_type == 1 ? "H.265"
+                                  : "AV1",
+           param_sets_end, total_size);
+    } else {
+      /* 找不到参数集结束位置,说明这是一个不带参数集的IDR帧 */
+      /* 正确做法: 将SEI插在第一个VCL NAL(IDR slice)之后 */
+
+      /* 查找第一个NAL单元的结束 */
+      size_t first_nal_end = 0;
+      if (bitstream_size > 4) {
+        /* 跳过第一个start code (0x00 0x00 0x00 0x01) */
+        size_t pos = 4;
+
+        /* 查找下一个start code或到达末尾 */
+        while (pos < bitstream_size - 3) {
+          if (bitstream_data[pos] == 0x00 && bitstream_data[pos + 1] == 0x00 &&
+              (bitstream_data[pos + 2] == 0x01 ||
+               (bitstream_data[pos + 2] == 0x00 &&
+                bitstream_data[pos + 3] == 0x01))) {
+            first_nal_end = pos;
+            break;
+          }
+          pos++;
+        }
+      }
+
+      if (first_nal_end > 0 && first_nal_end < bitstream_size) {
+        /* 将SEI插在第一个NAL之后 */
+        memcpy(packet->data, bitstream_data, first_nal_end);
+        memcpy(packet->data + first_nal_end, sei_nal, sei_nal_size);
+        memcpy(packet->data + first_nal_end + sei_nal_size,
+               bitstream_data + first_nal_end, bitstream_size - first_nal_end);
+
+        blog(LOG_INFO,
+             "[QSV Native] %s SEI inserted after first NAL (offset: %zu, "
+             "total: %zu)",
+             enc->codec_type == 0   ? "H.264"
+             : enc->codec_type == 1 ? "H.265"
+                                    : "AV1",
+             first_nal_end, total_size);
+      } else {
+        /* 最后的fallback: 插在整个bitstream之后(最安全的位置) */
+        blog(LOG_WARNING,
+             "[QSV Native] %s: Could not parse NAL structure, appending SEI at "
+             "end",
+             enc->codec_type == 0   ? "H.264"
+             : enc->codec_type == 1 ? "H.265"
+                                    : "AV1");
+        memcpy(packet->data, bitstream_data, bitstream_size);
+        memcpy(packet->data + bitstream_size, sei_nal, sei_nal_size);
+      }
+    }
+
     bfree(sei_nal);
+  } else {
+    /* 非关键帧或无SEI，直接复制 */
+    memcpy(packet->data, bitstream_data, bitstream_size);
   }
-  memcpy(packet->data + offset, enc->mfxBS.Data + enc->mfxBS.DataOffset,
-         enc->mfxBS.DataLength);
 
   packet->size = total_size;
   packet->type = OBS_ENCODER_VIDEO;

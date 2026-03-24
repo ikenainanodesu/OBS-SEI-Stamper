@@ -100,14 +100,36 @@ void *unified_encoder_create(obs_data_t *settings, obs_encoder_t *encoder) {
   enc->hardware_type =
       (hardware_type_t)obs_data_get_int(settings, "hardware_type");
 
-  // 读取预设或用户选择的编码格式
-  // 如果settings中有codec_type_preset，优先使用它（用于区分三个编码器）
-  int64_t preset_codec = obs_data_get_int(settings, "codec_type_preset");
-  if (preset_codec >= 0 && preset_codec < CODEC_TYPE_COUNT) {
-    enc->codec_type = (codec_type_t)preset_codec;
+  // 从encoder的ID来确定codec类型（最可靠的方式）
+  const char *encoder_id = obs_encoder_get_id(encoder);
+  blog(LOG_INFO, "[Unified Encoder] Encoder ID: %s",
+       encoder_id ? encoder_id : "NULL");
+
+  if (encoder_id) {
+    if (strcmp(encoder_id, "sei_stamper_h264") == 0) {
+      enc->codec_type = CODEC_TYPE_H264;
+      blog(LOG_INFO, "[Unified Encoder] Detected H.264 from encoder ID");
+    } else if (strcmp(encoder_id, "sei_stamper_h265") == 0) {
+      enc->codec_type = CODEC_TYPE_H265;
+      blog(LOG_INFO, "[Unified Encoder] Detected H.265 from encoder ID");
+    } else if (strcmp(encoder_id, "sei_stamper_av1") == 0) {
+      enc->codec_type = CODEC_TYPE_AV1;
+      blog(LOG_INFO, "[Unified Encoder] Detected AV1 from encoder ID");
+    } else {
+      // 未知ID，从settings读取作为fallback
+      enc->codec_type =
+          (codec_type_t)obs_data_get_int(settings, "codec_type_preset");
+      blog(LOG_WARNING,
+           "[Unified Encoder] Unknown encoder ID, using codec_type_preset: %d",
+           enc->codec_type);
+    }
   } else {
-    // 否则从用户选择读取（向后兼容）
-    enc->codec_type = (codec_type_t)obs_data_get_int(settings, "codec_type");
+    // encoder_id为NULL时从settings读取
+    enc->codec_type =
+        (codec_type_t)obs_data_get_int(settings, "codec_type_preset");
+    blog(LOG_WARNING,
+         "[Unified Encoder] Encoder ID is NULL, using codec_type_preset: %d",
+         enc->codec_type);
   }
 
   // 验证范围
@@ -116,6 +138,8 @@ void *unified_encoder_create(obs_data_t *settings, obs_encoder_t *encoder) {
   }
   if (enc->codec_type >= CODEC_TYPE_COUNT) {
     enc->codec_type = CODEC_TYPE_H264;
+    blog(LOG_WARNING,
+         "[Unified Encoder] codec_type out of range, defaulting to H.264");
   }
 
   blog(LOG_INFO,
@@ -137,6 +161,9 @@ void *unified_encoder_create(obs_data_t *settings, obs_encoder_t *encoder) {
   switch (enc->hardware_type) {
   case HARDWARE_TYPE_INTEL: {
 #ifdef ENABLE_VPL
+    // 将codec_type设置到settings中，让QSV encoder能读取到
+    obs_data_set_int(settings, "codec_type", enc->codec_type);
+
     enc->qsv_encoder = bzalloc(sizeof(qsv_encoder_t));
     qsv_encoder_t *qsv = (qsv_encoder_t *)enc->qsv_encoder;
     qsv->encoder = encoder;
@@ -162,6 +189,9 @@ void *unified_encoder_create(obs_data_t *settings, obs_encoder_t *encoder) {
 
   case HARDWARE_TYPE_NVIDIA: {
 #ifdef ENABLE_NVENC
+    // 将codec_type设置到settings中
+    obs_data_set_int(settings, "codec_type", enc->codec_type);
+
     enc->nvenc_encoder = bzalloc(sizeof(nvenc_encoder_t));
     nvenc_encoder_t *nvenc = (nvenc_encoder_t *)enc->nvenc_encoder;
     nvenc->encoder = encoder;
@@ -184,6 +214,9 @@ void *unified_encoder_create(obs_data_t *settings, obs_encoder_t *encoder) {
 
   case HARDWARE_TYPE_AMD: {
 #ifdef ENABLE_AMD
+    // 将codec_type设置到settings中
+    obs_data_set_int(settings, "codec_type", enc->codec_type);
+
     enc->amd_encoder = bzalloc(sizeof(amd_encoder_t));
     amd_encoder_t *amd = (amd_encoder_t *)enc->amd_encoder;
     amd->encoder = encoder;
@@ -271,6 +304,14 @@ bool unified_encoder_encode(void *data, struct encoder_frame *frame,
   unified_encoder_t *enc = (unified_encoder_t *)data;
   if (!enc) {
     return false;
+  }
+
+  static uint64_t unified_frame_count = 0;
+  unified_frame_count++;
+
+  if (unified_frame_count % 30 == 1) {
+    blog(LOG_INFO, "[Unified Encoder] encode() called: frame #%llu",
+         unified_frame_count);
   }
 
   // 转发到相应的底层编码器

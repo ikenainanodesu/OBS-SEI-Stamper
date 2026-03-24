@@ -88,6 +88,93 @@ static bool amd_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
   return true;
 }
 
+/* H.264/H.265 NAL类型定义 */
+#define H264_NAL_SPS 7
+#define H264_NAL_PPS 8
+#define H265_NAL_VPS 32
+#define H265_NAL_SPS 33
+#define H265_NAL_PPS 34
+
+/* 查找NAL单元起始码 */
+static const uint8_t *find_nal_start_code_amd(const uint8_t *data, size_t size,
+                                              size_t *start_code_size) {
+  if (size < 3)
+    return NULL;
+
+  for (size_t i = 0; i < size - 2; i++) {
+    if (data[i] == 0 && data[i + 1] == 0) {
+      if (data[i + 2] == 1) {
+        *start_code_size = 3;
+        return data + i;
+      } else if (i < size - 3 && data[i + 2] == 0 && data[i + 3] == 1) {
+        *start_code_size = 4;
+        return data + i;
+      }
+    }
+  }
+  return NULL;
+}
+
+/* 查找参数集结束位置(SPS/PPS/VPS之后) */
+static size_t find_parameter_sets_end_amd(const uint8_t *data, size_t size,
+                                          int codec_type) {
+  const uint8_t *current = data;
+  size_t remaining = size;
+  size_t last_param_end = 0;
+
+  while (remaining > 0) {
+    size_t sc_size = 0;
+    const uint8_t *nal_start =
+        find_nal_start_code_amd(current, remaining, &sc_size);
+
+    if (!nal_start)
+      break;
+
+    const uint8_t *nal_data = nal_start + sc_size;
+    size_t nal_remaining = remaining - (nal_data - current);
+
+    if (nal_remaining < 1)
+      break;
+
+    uint8_t nal_type;
+    bool is_param_set = false;
+
+    if (codec_type == 0) { // H.264
+      nal_type = nal_data[0] & 0x1F;
+      is_param_set = (nal_type == H264_NAL_SPS || nal_type == H264_NAL_PPS ||
+                      nal_type == 9);
+    } else if (codec_type == 1) { // H.265
+      nal_type = (nal_data[0] >> 1) & 0x3F;
+      is_param_set = (nal_type == H265_NAL_VPS || nal_type == H265_NAL_SPS ||
+                      nal_type == H265_NAL_PPS || nal_type == 35);
+    } else {
+      return 0;
+    }
+
+    size_t next_sc_size = 0;
+    const uint8_t *next_nal =
+        find_nal_start_code_amd(nal_data, nal_remaining, &next_sc_size);
+
+    if (is_param_set) {
+      if (next_nal) {
+        last_param_end = next_nal - data;
+      } else {
+        last_param_end = size;
+      }
+    } else {
+      return last_param_end;
+    }
+
+    if (!next_nal)
+      break;
+
+    current = next_nal;
+    remaining = size - (current - data);
+  }
+
+  return last_param_end;
+}
+
 /* 销毁编码器 */
 void amd_encoder_destroy(amd_encoder_t *enc) {
   if (!enc)
@@ -338,7 +425,7 @@ bool amd_encoder_encode_internal(void *data, struct encoder_frame *frame,
     }
   }
 
-  /* 组装 Packet */
+  /* 组装Packet with correct SEI insertion position */
   size_t total_size = enc->packet->size + sei_nal_size;
   if (enc->packet_buffer_size < total_size) {
     bfree(enc->packet_buffer);
@@ -346,13 +433,44 @@ bool amd_encoder_encode_internal(void *data, struct encoder_frame *frame,
     enc->packet_buffer_size = total_size;
   }
 
-  size_t offset = 0;
-  if (sei_nal) {
-    memcpy(enc->packet_buffer, sei_nal, sei_nal_size);
-    offset += sei_nal_size;
+  if (sei_nal && keyframe) {
+    /* 查找参数集结束位置 */
+    size_t param_sets_end = find_parameter_sets_end_amd(
+        enc->packet->data, enc->packet->size, enc->codec_type);
+
+    if (param_sets_end > 0 && param_sets_end < enc->packet->size) {
+      /* 正确顺序: 参数集 → SEI → IDR slice */
+      /* 1. 复制参数集 */
+      memcpy(enc->packet_buffer, enc->packet->data, param_sets_end);
+      size_t offset = param_sets_end;
+
+      /* 2. 插入SEI */
+      memcpy(enc->packet_buffer + offset, sei_nal, sei_nal_size);
+      offset += sei_nal_size;
+
+      /* 3. 复制剩余数据 */
+      size_t remaining = enc->packet->size - param_sets_end;
+      memcpy(enc->packet_buffer + offset, enc->packet->data + param_sets_end,
+             remaining);
+
+      encoder_log(LOG_DEBUG, enc,
+                  "SEI inserted after parameter sets (offset: %zu)",
+                  param_sets_end);
+    } else {
+      /* Fallback到旧行为 */
+      encoder_log(LOG_WARNING, enc,
+                  "Could not find parameter sets end, inserting SEI at "
+                  "beginning (may cause decoding issues)");
+      memcpy(enc->packet_buffer, sei_nal, sei_nal_size);
+      memcpy(enc->packet_buffer + sei_nal_size, enc->packet->data,
+             enc->packet->size);
+    }
+
     bfree(sei_nal);
+  } else {
+    /* 非关键帧或无SEI */
+    memcpy(enc->packet_buffer, enc->packet->data, enc->packet->size);
   }
-  memcpy(enc->packet_buffer + offset, enc->packet->data, enc->packet->size);
 
   packet->data = enc->packet_buffer;
   packet->size = total_size;

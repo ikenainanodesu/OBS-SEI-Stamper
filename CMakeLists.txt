@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(sei-stamper VERSION 1.2.0)
+project(sei-stamper VERSION 1.2.1)
 
 # 设置C/C++标准
 set(CMAKE_C_STANDARD 11)
@@ -73,19 +73,31 @@ if(PKG_CONFIG_FOUND)
     pkg_check_modules(FFMPEG QUIET libavcodec libavformat libavutil libswscale)
 endif()
 
+# 动态查找最新的 obs-deps 目录
+file(GLOB OBS_DEPS_DIRS "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-20??-??-??-x64")
+list(SORT OBS_DEPS_DIRS)
+list(REVERSE OBS_DEPS_DIRS)
+if(OBS_DEPS_DIRS)
+    list(GET OBS_DEPS_DIRS 0 LATEST_OBS_DEPS_DIR)
+    message(STATUS "Found latest OBS deps: ${LATEST_OBS_DEPS_DIR}")
+else()
+    message(WARNING "Could not find any OBS deps directory in ${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/")
+    set(LATEST_OBS_DEPS_DIR "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64")
+endif()
+
 # 如果pkg-config找不到，手动设置FFmpeg路径
 if(NOT FFMPEG_FOUND)
     # OBS的FFmpeg依赖位于.deps目录
-    set(FFMPEG_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/include")
-    set(FFMPEG_LIBRARY_DIRS "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/bin")
+    set(FFMPEG_INCLUDE_DIRS "${LATEST_OBS_DEPS_DIR}/include")
+    set(FFMPEG_LIBRARY_DIRS "${LATEST_OBS_DEPS_DIR}/bin")
     set(FFMPEG_LIBRARIES avcodec avformat avutil swscale)
     message(STATUS "Using OBS deps FFmpeg configuration")
     message(STATUS "  FFmpeg include: ${FFMPEG_INCLUDE_DIRS}")
 endif()
 
 # 查找x264库（用于编码器）
-set(X264_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/include")
-set(X264_LIBRARY "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/lib/libx264.lib")
+set(X264_INCLUDE_DIR "${LATEST_OBS_DEPS_DIR}/include")
+set(X264_LIBRARY "${LATEST_OBS_DEPS_DIR}/lib/libx264.lib")
 
 if(EXISTS "${X264_LIBRARY}")
     message(STATUS "Found x264 library: ${X264_LIBRARY}")
@@ -131,7 +143,7 @@ target_link_libraries(sei-stamper
 )
 
 # 添加FFmpeg库（使用完整路径）
-set(FFMPEG_LIB_DIR "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/lib")
+set(FFMPEG_LIB_DIR "${LATEST_OBS_DEPS_DIR}/lib")
 target_link_libraries(sei-stamper
     "${FFMPEG_LIB_DIR}/avcodec.lib"
     "${FFMPEG_LIB_DIR}/avformat.lib"
@@ -145,8 +157,8 @@ target_link_libraries(sei-stamper
 )
 
 # 添加Intel VPL库
-set(VPL_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/include")
-set(VPL_LIBRARY "${CMAKE_SOURCE_DIR}/obs-studio-master/.deps/obs-deps-2025-08-23-x64/lib/vpl.lib")
+set(VPL_INCLUDE_DIR "${LATEST_OBS_DEPS_DIR}/include")
+set(VPL_LIBRARY "${LATEST_OBS_DEPS_DIR}/lib/vpl.lib")
 
 if(EXISTS "${VPL_LIBRARY}")
     message(STATUS "Found VPL library: ${VPL_LIBRARY}")

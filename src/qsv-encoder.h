@@ -47,6 +47,7 @@ typedef struct qsv_encoder {
   /* Header Data */
   uint8_t *extra_data;
   size_t extra_data_size;
+  bool extra_data_ready; // 标记 extra_data 是否已从码流提取
 
   /* NTP Synchronization */
   struct ntp_client ntp_client;     // NTP客户端

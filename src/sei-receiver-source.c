@@ -306,11 +306,18 @@ bool decode_and_extract_sei(sei_receiver_source_t *source, AVPacket *packet,
   }
 
   /* 发送数据包到解码器 */
+  static uint64_t send_count = 0;
+  send_count++;
+
   int ret = avcodec_send_packet(codec_ctx, packet);
   if (ret < 0) {
-    receiver_log(LOG_ERROR, source, "Failed to send packet to decoder: %d",
-                 ret);
+    receiver_log(LOG_ERROR, source, "Failed to send packet to decoder: %d (%s)",
+                 ret, av_err2str(ret));
     return false;
+  }
+
+  if (send_count % 30 == 1) {
+    receiver_log(LOG_INFO, source, "Packet sent to decoder: #%llu", send_count);
   }
 
   /* 接收解码帧 */
@@ -322,19 +329,46 @@ bool decode_and_extract_sei(sei_receiver_source_t *source, AVPacket *packet,
   ret = avcodec_receive_frame(codec_ctx, av_frame);
   if (ret < 0) {
     av_frame_free(&av_frame);
-    if (ret != AVERROR(EAGAIN) && ret != AVERROR_EOF) {
-      receiver_log(LOG_ERROR, source, "Failed to receive frame: %d", ret);
 
-      /* 错误恢复：增加错误计数 */
-      source->decode_error_count++;
-      if (source->decode_error_count >= source->decode_error_threshold) {
-        receiver_log(LOG_WARNING, source,
-                     "Decoder error threshold reached (%u), attempting reset",
-                     source->decode_error_count);
-        reset_decoder(source);
+    /* EAGAIN表示解码器需要更多输入，这是正常的 */
+    if (ret == AVERROR(EAGAIN)) {
+      static uint64_t eagain_count = 0;
+      eagain_count++;
+      if (eagain_count % 100 == 1) {
+        receiver_log(LOG_DEBUG, source,
+                     "Decoder needs more data (EAGAIN count: %llu)",
+                     eagain_count);
       }
+      return true; /* 包已处理，但还没有输出帧 */
+    }
+
+    /* EOF也是正常的结束 */
+    if (ret == AVERROR_EOF) {
+      receiver_log(LOG_INFO, source, "Decoder EOF");
+      return false;
+    }
+
+    /* 其他错误才是真正的问题 */
+    receiver_log(LOG_ERROR, source, "Video decode failed: %d (%s)", ret,
+                 av_err2str(ret));
+
+    /* 错误恢复：增加错误计数 */
+    source->decode_error_count++;
+    if (source->decode_error_count >= source->decode_error_threshold) {
+      receiver_log(LOG_WARNING, source,
+                   "Decoder error threshold reached (%u), attempting reset",
+                   source->decode_error_count);
+      reset_decoder(source);
     }
     return false;
+  }
+
+  static uint64_t video_frame_count = 0;
+  video_frame_count++;
+  if (video_frame_count % 30 == 1) {
+    receiver_log(
+        LOG_INFO, source, "Video frame decoded: #%llu, format=%d, size=%dx%d",
+        video_frame_count, av_frame->format, av_frame->width, av_frame->height);
   }
 
   /* 解码成功，重置错误计数 */
@@ -774,7 +808,13 @@ static void *receiver_source_create(obs_data_t *settings,
     ctx->hw_decode_enabled = false;
   }
 
-  /* codec_type已移除 - 接收端自动检测流的编码格式 */
+  /* Codec格式设置 (手动选择优先) */
+  const char *codec_format = obs_data_get_string(settings, "codec_format");
+  if (codec_format && codec_format[0]) {
+    strncpy(ctx->codec_format, codec_format, sizeof(ctx->codec_format) - 1);
+  } else {
+    strcpy(ctx->codec_format, "auto"); // 默认自动检测
+  }
 
   const char *ntp_server = obs_data_get_string(settings, "ntp_server");
   if (ntp_server && ntp_server[0]) {
@@ -880,7 +920,7 @@ static void receiver_source_defaults(obs_data_t *settings) {
   obs_data_set_default_int(settings, "ntp_port", 123);
   obs_data_set_default_bool(settings, "ntp_enabled", true);
   obs_data_set_default_string(settings, "hw_decoder", "none");
-  /* codec_type已移除 - 自动检测 */
+  obs_data_set_default_string(settings, "codec_format", "auto"); // 默认自动检测
   obs_data_set_default_int(settings, "ntp_drift_threshold", 50); // 默认 50ms
   obs_data_set_default_int(settings, "ntp_sync_interval",
                            10000); // 默认 10000ms (10秒)
@@ -909,7 +949,15 @@ static obs_properties_t *receiver_source_properties(void *data) {
   obs_property_list_add_string(hw_list, obs_module_text("HWDecoder.AMF"),
                                "amf");
 
-  /* Codec Format已移除 - 接收端自动检测流的编码格式 */
+  /* Codec格式选择 (手动选择优先于自动检测) */
+  obs_property_t *codec_list = obs_properties_add_list(
+      props, "codec_format", obs_module_text("CodecFormat"),
+      OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
+  obs_property_list_add_string(codec_list, obs_module_text("CodecFormat.Auto"),
+                               "auto");
+  obs_property_list_add_string(codec_list, "H.264", "h264");
+  obs_property_list_add_string(codec_list, "H.265 (HEVC)", "h265");
+  obs_property_list_add_string(codec_list, "AV1", "av1");
 
   /* NTP设置组 */
   obs_properties_add_group(props, "ntp_group", obs_module_text("NTPSettings"),
@@ -1006,7 +1054,19 @@ static void receiver_source_update(void *data, obs_data_t *settings) {
     settings_changed = true;
   }
 
-  /* codec_type检测已移除 - 自动检测 */
+  /* 更新Codec格式设置 */
+  const char *codec_format = obs_data_get_string(settings, "codec_format");
+  if (codec_format && codec_format[0] &&
+      strcmp(ctx->codec_format, codec_format) != 0) {
+    /* 如果codec格式改变，需要重启接收器 */
+    receiver_log(LOG_INFO, ctx,
+                 "Codec format changed from '%s' to '%s', restarting...",
+                 ctx->codec_format, codec_format);
+
+    stop_receiver(ctx);
+    strncpy(ctx->codec_format, codec_format, sizeof(ctx->codec_format) - 1);
+    settings_changed = true;
+  }
 
   /* 如果因为设置改变而停止了，现在重新启动 */
   if (settings_changed) {
@@ -1094,11 +1154,33 @@ static bool try_connect(sei_receiver_source_t *source) {
     init_hw_device(source);
   }
 
-  /* 自动检测流的编码格式（从流中读取，而非用户选择） */
-  enum AVCodecID codec_id = vstream->codecpar->codec_id;
-  const char *codec_name = avcodec_get_name(codec_id);
-  receiver_log(LOG_INFO, source, "Auto-detected codec: %s (ID: %d)", codec_name,
-               codec_id);
+  /* 确定要使用的codec：手动选择优先于自动检测 */
+  enum AVCodecID codec_id;
+  const char *codec_name;
+
+  if (strcmp(source->codec_format, "auto") != 0) {
+    /* 用户手动选择了codec格式 */
+    if (strcmp(source->codec_format, "h264") == 0) {
+      codec_id = AV_CODEC_ID_H264;
+    } else if (strcmp(source->codec_format, "h265") == 0 ||
+               strcmp(source->codec_format, "hevc") == 0) {
+      codec_id = AV_CODEC_ID_HEVC;
+    } else if (strcmp(source->codec_format, "av1") == 0) {
+      codec_id = AV_CODEC_ID_AV1;
+    } else {
+      /* 不识别的格式，fallback到自动检测 */
+      codec_id = vstream->codecpar->codec_id;
+    }
+    codec_name = avcodec_get_name(codec_id);
+    receiver_log(LOG_INFO, source, "Using manually selected codec: %s (ID: %d)",
+                 codec_name, codec_id);
+  } else {
+    /* 自动检测流的编码格式 */
+    codec_id = vstream->codecpar->codec_id;
+    codec_name = avcodec_get_name(codec_id);
+    receiver_log(LOG_INFO, source, "Auto-detected codec: %s (ID: %d)",
+                 codec_name, codec_id);
+  }
 
   /* 初始化视频解码器 */
   const AVCodec *codec = avcodec_find_decoder(codec_id);
@@ -1110,13 +1192,38 @@ static bool try_connect(sei_receiver_source_t *source) {
   }
 
   AVCodecContext *cctx = avcodec_alloc_context3(codec);
-  avcodec_parameters_to_context(cctx, vstream->codecpar);
+
+  /* 即使手动选择了codec，也要从流中复制参数（如分辨率、profile等） */
+  /* 但只有在自动检测时才使用流的codec_id */
+  if (strcmp(source->codec_format, "auto") == 0) {
+    /* 自动检测：完全使用流的参数 */
+    avcodec_parameters_to_context(cctx, vstream->codecpar);
+  } else {
+    /* 手动选择：使用流的参数但替换codec类型 */
+    /* 先复制流的参数 */
+    avcodec_parameters_to_context(cctx, vstream->codecpar);
+
+    /* 然后覆盖codec_id为用户选择的类型 */
+    cctx->codec_id = codec_id;
+
+    receiver_log(LOG_INFO, source,
+                 "Applied stream parameters with manual codec override");
+  }
 
   /* 配置硬件解码 */
   if (source->hw_decode_enabled && source->hw_device_ctx) {
     cctx->hw_device_ctx = av_buffer_ref((AVBufferRef *)source->hw_device_ctx);
     cctx->get_format = get_hw_format;
     receiver_log(LOG_INFO, source, "Hardware decoder configured");
+  }
+
+  /* 检查extradata (VPS/SPS/PPS for H.265) */
+  if (cctx->extradata && cctx->extradata_size > 0) {
+    receiver_log(LOG_INFO, source, "Decoder has extradata: %d bytes",
+                 cctx->extradata_size);
+  } else {
+    receiver_log(LOG_WARNING, source,
+                 "Decoder has NO extradata - H.265 may fail to decode!");
   }
 
   if (avcodec_open2(cctx, codec, NULL) < 0) {
@@ -1224,13 +1331,27 @@ static void *srt_receive_thread(void *data) {
       }
 
       /* 3. 处理数据包 */
+      static uint64_t video_packet_count = 0;
+      static uint64_t audio_packet_count = 0;
+
       if (packet->stream_index == source->video_stream_index) {
+        video_packet_count++;
+        if (video_packet_count % 30 == 1) {
+          receiver_log(LOG_INFO, source,
+                       "Video packet received: #%llu, size=%d",
+                       video_packet_count, packet->size);
+        }
         video_frame_data_t frame = {0};
         if (decode_and_extract_sei(source, packet, &frame)) {
           source->frames_rendered++;
         }
       } else if (source->audio_stream_index >= 0 &&
                  packet->stream_index == source->audio_stream_index) {
+        audio_packet_count++;
+        if (audio_packet_count % 300 == 1) {
+          receiver_log(LOG_INFO, source, "Audio packet received: #%llu",
+                       audio_packet_count);
+        }
         decode_audio(source, packet);
       }
 
