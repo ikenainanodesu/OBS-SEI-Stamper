@@ -989,6 +989,10 @@ static obs_properties_t *receiver_source_properties(void *data) {
   obs_properties_add_text(props, "status", obs_module_text("Status"),
                           OBS_TEXT_INFO);
 
+  /* 版本信息 */
+  obs_properties_add_text(props, "plugin_version", "v1.2.1",
+                          OBS_TEXT_INFO);
+
   return props;
 }
 

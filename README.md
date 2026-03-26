@@ -197,6 +197,9 @@ Portions of this project's code and documentation were generated with the assist
 
 ### v1.2.1 (2026-03-24)
 
+**✨ New Features & Improvements:**
+- 🏷️ **Receiver Version Display**: Added a plugin version label at the bottom of the SEI Receiver's properties UI for easier identification.
+
 **🔧 Configuration & Building:**
 - ⚙️ **Dynamic CMake Dependency Parsing**: Updated `CMakeLists.txt` to dynamically search for the newest `obs-deps-*` folder. This guarantees build script compatibility with future OBS Studio releases without manual modification.
 - ✅ Verified build compatibility with OBS Studio **32.1.0** framework and dependencies.
