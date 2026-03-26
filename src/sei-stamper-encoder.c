@@ -165,7 +165,10 @@ static void *sei_stamper_encoder_create(obs_data_t *settings,
   }
 
   /* Flags */
-  enc->codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+  /* Flags: 不使用 GLOBAL_HEADER，强制让编码器在关键帧输出包含 VPS/SPS/PPS，
+   * 否则在使用 SLS (SRT Live Server) 这种基于 TS 流中间件时，
+   * 它由于找不到带外 extradata 或帧内的 SPS/PPS 可能会一直丢弃视频 (视频黑屏)。 */
+  // enc->codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
   /* 打开编码器 opts */
   AVDictionary *opts = NULL;
@@ -379,7 +382,7 @@ static bool sei_stamper_encoder_encode(void *data, struct encoder_frame *frame,
     }
   }
 
-  /* 组装最终Packet数据 */
+  /* 组装最终Packet数据 - SEI必须插入在AUD/参数集之后、Slice之前 */
   size_t total_size = enc->packet->size + (has_sei ? sei_nal_size : 0);
 
   if (enc->packet_buffer_size < total_size) {
@@ -388,15 +391,87 @@ static bool sei_stamper_encoder_encode(void *data, struct encoder_frame *frame,
     enc->packet_buffer_size = total_size;
   }
 
-  size_t offset = 0;
-
   if (has_sei) {
+    /* 查找AUD和参数集的结束位置，SEI必须在其之后 */
+    const uint8_t *pkt_data = enc->packet->data;
+    int pkt_size = enc->packet->size;
+    size_t insert_pos = 0;
+
+    /* 遍历NAL单元，找到AUD/VPS/SPS/PPS结束的位置 */
+    const uint8_t *p = pkt_data;
+    size_t remaining = pkt_size;
+    while (remaining > 4) {
+      /* 查找起始码 */
+      size_t sc_len = 0;
+      if (p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 1) {
+        sc_len = 4;
+      } else if (p[0] == 0 && p[1] == 0 && p[2] == 1) {
+        sc_len = 3;
+      }
+      if (sc_len == 0) { p++; remaining--; continue; }
+
+      /* 获取NAL类型 */
+      const uint8_t *nal_hdr = p + sc_len;
+      if (remaining <= sc_len) break;
+
+      int nal_type = -1;
+      bool is_prefix_nal = false; /* AUD, VPS, SPS, PPS */
+
+      if (enc->codec_type == SEI_STAMPER_CODEC_H265) {
+        nal_type = (nal_hdr[0] >> 1) & 0x3F;
+        /* H.265: VPS=32, SPS=33, PPS=34, AUD=35 */
+        is_prefix_nal = (nal_type == 32 || nal_type == 33 ||
+                         nal_type == 34 || nal_type == 35);
+      } else {
+        nal_type = nal_hdr[0] & 0x1F;
+        /* H.264: SPS=7, PPS=8, AUD=9 */
+        is_prefix_nal = (nal_type == 7 || nal_type == 8 || nal_type == 9);
+      }
+
+      /* 找到下一个NAL起始码来确定当前NAL的结束位置 */
+      const uint8_t *next = nal_hdr + 1;
+      size_t next_rem = remaining - sc_len - 1;
+      const uint8_t *nal_end = NULL;
+      /* >= 3 才能检测3字节起始码 00 00 01；>= 4 才能检测4字节起始码 00 00 00 01 */
+      while (next_rem >= 3) {
+        if (next[0] == 0 && next[1] == 0 &&
+            (next[2] == 1 || (next[2] == 0 && next_rem >= 4 && next[3] == 1))) {
+          nal_end = next;
+          break;
+        }
+        next++; next_rem--;
+      }
+      if (!nal_end) nal_end = pkt_data + pkt_size; /* 最后一个NAL */
+
+      if (is_prefix_nal) {
+        /* 这是前置NAL (AUD/VPS/SPS/PPS)，SEI应在其之后 */
+        insert_pos = nal_end - pkt_data;
+        p = nal_end;
+        remaining = pkt_size - (p - pkt_data);
+      } else {
+        /* 遇到非前置NAL (SEI或Slice)，停止搜索 */
+        break;
+      }
+    }
+
+    /* 在正确位置插入SEI */
+    size_t offset = 0;
+    /* 1. 复制AUD/参数集部分 */
+    if (insert_pos > 0) {
+      memcpy(enc->packet_buffer, pkt_data, insert_pos);
+      offset = insert_pos;
+    }
+    /* 2. 插入我们的SEI */
     memcpy(enc->packet_buffer + offset, sei_nal, sei_nal_size);
     offset += sei_nal_size;
-    bfree(sei_nal);
-  }
+    /* 3. 复制剩余数据 (编码器自带SEI + Slice) */
+    size_t rest = pkt_size - insert_pos;
+    memcpy(enc->packet_buffer + offset, pkt_data + insert_pos, rest);
 
-  memcpy(enc->packet_buffer + offset, enc->packet->data, enc->packet->size);
+    bfree(sei_nal);
+  } else {
+    memcpy(enc->packet_buffer, enc->packet->data, enc->packet->size);
+  }
 
   packet->data = enc->packet_buffer;
   packet->size = total_size;
@@ -482,10 +557,11 @@ static obs_properties_t *sei_stamper_encoder_properties(void *unused) {
 }
 
 /* H.264 编码器回调 */
-static void sei_stamper_encoder_update(void *data, obs_data_t *settings) {
+static bool sei_stamper_encoder_update(void *data, obs_data_t *settings) {
   /* 更新编码器设置（如果需要运行时更新）*/
   UNUSED_PARAMETER(data);
   UNUSED_PARAMETER(settings);
+  return true;
 }
 
 struct obs_encoder_info sei_stamper_h264_encoder_info = {

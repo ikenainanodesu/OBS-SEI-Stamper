@@ -16,6 +16,8 @@
 #define ALIGN16(value) (((value + 15) >> 4) << 4)
 #define ALIGN32(value) (((value + 31) >> 5) << 5)
 
+#include "sei-handler.h"
+#if 0
 /* NTP Helpers (Copied/Adapted) */
 static bool qsv_build_ntp_sei_payload(int64_t pts, ntp_timestamp_t *ntp_time,
                                       uint8_t **payload, size_t *size) {
@@ -113,6 +115,7 @@ static bool qsv_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
   *nal_size = (p - *nal_unit);
   return true;
 }
+#endif
 
 /* ------------------------------------------------------------------------- */
 /* NAL Unit Extraction Helpers */
@@ -481,10 +484,9 @@ static size_t find_parameter_sets_end(const uint8_t *data, size_t size,
     } else if (codec_type == 1) { // H.265
       nal_type = (nal_data[0] >> 1) & 0x3F;
       // VPS=32, SPS=33, PPS=34, AUD=35, PREFIX_SEI=39, SUFFIX_SEI=40
-      // 只将VPS/SPS/PPS视为参数集，不包括AUD
-      // SEI应该在参数集之后、AUD和slice之前
+      // 包含AUD，使其行为与NVENC/AMF一致
       is_param_set = (nal_type == H265_NAL_VPS || nal_type == H265_NAL_SPS ||
-                      nal_type == H265_NAL_PPS);
+                      nal_type == H265_NAL_PPS || nal_type == 35);
 
       // Debug: 记录遇到的NAL类型
       if (last_param_end == 0 || is_param_set) {
@@ -944,10 +946,10 @@ bool qsv_encoder_encode_internal(void *data, struct encoder_frame *frame,
 
     uint8_t *payload = NULL;
     size_t payload_size = 0;
-    if (qsv_build_ntp_sei_payload(frame->pts, &enc->current_ntp_time, &payload,
+    if (build_ntp_sei_payload(frame->pts, &enc->current_ntp_time, &payload,
                                   &payload_size)) {
-      qsv_build_sei_nal_unit(payload, payload_size, 6, enc->codec_type,
-                             &sei_nal, &sei_nal_size);
+      sei_nal_type_t nal_type = (enc->codec_type == 1) ? SEI_NAL_H265_PREFIX : SEI_NAL_H264;
+      build_sei_nal_unit(payload, payload_size, nal_type, &sei_nal, &sei_nal_size);
       bfree(payload);
 
       blog(LOG_DEBUG, "[QSV Native] Inserted SEI: PTS=%lld NTP=%u.%u Size=%zu",

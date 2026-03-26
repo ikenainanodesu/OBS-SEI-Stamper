@@ -13,6 +13,8 @@
   blog(level, "[AMD Encoder: '%s'] " format,                                   \
        obs_encoder_get_name(enc->encoder), ##__VA_ARGS__)
 
+#include "sei-handler.h"
+#if 0
 /* NTP SEI 构建函数 (复用自 nvenc-encoder.c) */
 static bool amd_build_ntp_sei_payload(int64_t pts, ntp_timestamp_t *ntp_time,
                                       uint8_t **payload, size_t *size) {
@@ -87,6 +89,7 @@ static bool amd_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
   *nal_size = (p - *nal_unit);
   return true;
 }
+#endif
 
 /* H.264/H.265 NAL类型定义 */
 #define H264_NAL_SPS 7
@@ -285,7 +288,7 @@ void *amd_encoder_create_internal(obs_data_t *settings,
   enc->codec_context->bit_rate = enc->bitrate * 1000;
   enc->codec_context->gop_size = enc->keyint;
   enc->codec_context->max_b_frames = enc->bframes;
-  enc->codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+  /* enc->codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER; */
 
   /* AMD AMF 特定选项 */
   AVDictionary *opts = NULL;
@@ -413,9 +416,10 @@ bool amd_encoder_encode_internal(void *data, struct encoder_frame *frame,
   if (keyframe) {
     uint8_t *payload = NULL;
     size_t payload_size = 0;
-    if (amd_build_ntp_sei_payload(frame->pts, &enc->current_ntp_time, &payload,
+    if (build_ntp_sei_payload(frame->pts, &enc->current_ntp_time, &payload,
                                   &payload_size)) {
-      amd_build_sei_nal_unit(payload, payload_size, 6, &sei_nal, &sei_nal_size);
+      sei_nal_type_t nal_type = (enc->codec_type == 1) ? SEI_NAL_H265_PREFIX : SEI_NAL_H264;
+      build_sei_nal_unit(payload, payload_size, nal_type, &sei_nal, &sei_nal_size);
       bfree(payload);
 
       encoder_log(LOG_DEBUG, enc,

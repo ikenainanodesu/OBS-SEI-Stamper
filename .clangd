@@ -1,0 +1,14 @@
+CompileFlags:
+  Add:
+    # OBS SDK 主头文件路径（obs-module.h、util/bmem.h、util/base.h 等均在此）
+    - "-Id:/git-repo/obs-sei-stamper/obs-studio-master/libobs"
+    # CMake 为 OBS 生成的配置头文件（obsconfig.h 在此）
+    - "-Id:/git-repo/obs-sei-stamper/obs-studio-master/build/config"
+    # 本插件自身的构建目录
+    - "-Id:/git-repo/obs-sei-stamper/build"
+    # FFmpeg 头文件（libavcodec/avcodec.h、libavutil/ 等）来自 obs-deps
+    - "-Id:/git-repo/obs-sei-stamper/obs-studio-master/.deps/obs-deps-2025-08-23-x64/include"
+    # 插件源码目录（sei-handler.h、ntp-client.h 等在此）
+    - "-Id:/git-repo/obs-sei-stamper/src"
+    # OBS pthreads 路径，修复 IDE 的 pthread 未声明错误
+    - "-Id:/git-repo/obs-sei-stamper/obs-studio-master/deps/w32-pthreads"

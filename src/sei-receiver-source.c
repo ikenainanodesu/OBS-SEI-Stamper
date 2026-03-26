@@ -990,7 +990,7 @@ static obs_properties_t *receiver_source_properties(void *data) {
                           OBS_TEXT_INFO);
 
   /* 版本信息 */
-  obs_properties_add_text(props, "plugin_version", "v1.2.1",
+  obs_properties_add_text(props, "plugin_version", "v1.2.2",
                           OBS_TEXT_INFO);
 
   return props;
@@ -1312,7 +1312,7 @@ static void *srt_receive_thread(void *data) {
         /* 连接成功，进入数据接收循环 */
       } else {
         /* 连接失败，等待后重试 */
-        pthread_testcancel(); // Allow exit
+        /* pthread_testcancel(); // Allow exit (Not supported in w32-pthreads) */
         os_sleep_ms(2000);    // Sleep 2s
         continue;
       }

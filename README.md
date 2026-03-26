@@ -18,7 +18,7 @@ SEI Stamper is an OBS Studio plugin that enables **frame-level video synchroniza
 **Key Features:**
 - 🎯 **Frame-accurate synchronization** using NTP timestamps
 - 📡 **Multiple hardware encoders**: Intel QuickSync, NVIDIA NVENC, AMD AMF
-- 🎞️ **Multi-Codec Support**: **H.264**, **H.265 (HEVC)**, and **AV1**
+- 🎞️ **Multi-Codec Support**: **H.264** and **H.265 (HEVC)**
 - 🚀 **GPU acceleration**: Hardware-accelerated encoding with SEI support
 - 🔄 **Sender & Receiver**: Complete solution for encoding and decoding
 - 🌐 **SRT streaming**: Built-in SRT receiver for low-latency streaming
@@ -90,8 +90,7 @@ The release package includes:
 1. Open **Settings → Output → Output Mode: Advanced**
 2. Select a SEI Stamper encoder based on your desired codec:
    - **SEI Stamper (H.264)** - Best compatibility
-   - **SEI Stamper (H.265)** - High efficiency (HEVC), 30-50% bandwidth savings (Recommended)
-   - **SEI Stamper (AV1)** - Next-gen efficiency (*Note: SRT streaming support depends on OBS version*)
+   - **SEI Stamper (H.265)** - High efficiency (HEVC), 30-50% bandwidth savings. (Note: Supports P2P caller-listener sync. SLS server support is limited, currently unstable, seeking optimization solutions)
 3. In the encoder settings, select your **Hardware Encoder**:
    - Intel QuickSync
    - NVIDIA NVENC
@@ -101,7 +100,7 @@ The release package includes:
    - **Enable NTP Sync**: ✓
 5. Start streaming/recording
 
-> **⚠️ Note on AV1**: While the plugin supports AV1 encoding, current versions of OBS Studio may not support AV1 for SRT streaming output. H.264 and H.265 are fully verified for SRT streaming.
+> **⚠️ Note on H.265**: H.265 supports Point-to-Point (Caller-Listener) synchronization. Support for SLS servers is currently limited and may exhibit unstable performance. We are actively looking for solutions to improve it.
 
 ### Receiver (Source)
 
@@ -113,7 +112,7 @@ The release package includes:
    - **NTP Server**: Same as sender
 4. Click **OK**
 
-**Note**: The receiver **automatically detects** the codec format (H.264/H.265/AV1). No manual selection is needed.
+**Note**: The receiver **requires a manual match** of the sender's codec format (H.264/H.265). Please ensure the "Codec Format" in the receiver settings matches the encoder used by the sender.
 
 ---
 
@@ -180,8 +179,7 @@ MediaInfo --Full output.mp4 | Select-String "SEI"
 | Encoder Name | Codec | Supported Hardware | Status |
 |--------------|-------|--------------------|--------|
 | SEI Stamper (H.264) | H.264/AVC | Intel, NVIDIA, AMD | ✅ Verified |
-| SEI Stamper (H.265) | H.265/HEVC | Intel, NVIDIA, AMD | ✅ Verified (Rec.)|
-| SEI Stamper (AV1) | AV1 | Intel, NVIDIA, AMD | ⚠️ (OBS SRT limit)|
+| SEI Stamper (H.265) | H.265/HEVC | Intel, NVIDIA, AMD | ⚠️ (Limited SLS Support)|
 
 ---
 
@@ -194,6 +192,12 @@ Portions of this project's code and documentation were generated with the assist
 ---
 
 ## Release Notes
+
+### v1.2.2 (2026-03-26)
+
+**✨ Updates:**
+- 📝 **Documentation**: Removed AV1 encoding descriptions. Updated H.265 status to reflect limited SLS server support.
+- 🔧 **Code Maintenance**: Fixed IDE thread compilation warnings (`pthread.h`).
 
 ### v1.2.1 (2026-03-24)
 
@@ -213,7 +217,7 @@ Portions of this project's code and documentation were generated with the assist
   - `SEI STAMPER (H.265)`
   - `SEI STAMPER (AV1)`
   - Each supports hardware acceleration (Intel/NVIDIA/AMD).
-- 🧠 **Smart Receiver**: Automatically detects stream codec format. Removed manual "Codec Format" selection.
+- 🧠 **Receiver Configuration**: The receiver requires manual selection of the matching codec format for proper decoding.
 
 **⚠️ Important limitation:**
 - **H.264** and **H.265** are fully supported for SRT streaming.
@@ -243,5 +247,5 @@ Portions of this project's code and documentation were generated with the assist
 
 ---
 
-**Current Version**: 1.2.1  
-**Last Updated**: 2026-03-24
+**Current Version**: 1.2.2  
+**Last Updated**: 2026-03-26

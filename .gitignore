@@ -90,6 +90,7 @@ release/
 needs.md
 *.dmp
 *.stackdump
+h265wb.md
 
 # Compiled locale files (keep source .ini files in data/locale/)
 # *.mo

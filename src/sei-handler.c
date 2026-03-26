@@ -6,7 +6,7 @@
 ******************************************************************************/
 
 #include "sei-handler.h"
-#include <obs-module.h>
+#include <obs-module.h> /* blog, bmalloc, LOG_ERROR, LOG_DEBUG */
 #include <stdlib.h>
 #include <string.h>
 
@@ -115,12 +115,12 @@ bool build_sei_nal_unit(const uint8_t *payload, size_t payload_size,
     return false;
   }
 
-  /* NAL单元结构:
-   * - 起始码: 0x00 0x00 0x00 0x01 (4字节)
+  /* NAL单元结构 (Annex B):
+   * - 起始码: 0x00 0x00 0x00 0x01 (4字节，不属于RBSP)
    * - NAL header: 1字节(H.264)或2字节(H.265)
-   * - SEI type: 可变长度编码
-   * - SEI size: 可变长度编码
-   * - Payload: payload_size字节
+   * - SEI payloadType: 可变长度编码
+   * - SEI payloadSize: 记录原始（转义前）字节数，符合 ISO/IEC 23008-2 规范
+   * - Payload: 需做EPB (Emulation Prevention Bytes) 转义
    * - RBSP trailing bits: 0x80 (1字节)
    */
 
@@ -130,10 +130,14 @@ bool build_sei_nal_unit(const uint8_t *payload, size_t payload_size,
 
   size_t type_len =
       write_variable_length(type_buf, SEI_TYPE_USER_DATA_UNREGISTERED);
+  /* payloadSize 写入 RBSP 原始长度（EPB转义前），符合规范 */
   size_t size_len = write_variable_length(size_buf, payload_size);
 
-  size_t total_size = 4 + header_size + type_len + size_len + payload_size + 1;
-  uint8_t *nal_unit = (uint8_t *)bmalloc(total_size);
+  /* 最坏情况下每2字节的00序列就插入一个EPB（0x03），payload最多膨胀1.5倍
+   * 预留足够空间：4(start) + header + type + size + payload*1.5 + 4margin + 1(trailing) */
+  size_t max_escaped_payload = payload_size + (payload_size / 2) + 4;
+  size_t max_total = 4 + header_size + type_len + size_len + max_escaped_payload + 1;
+  uint8_t *nal_unit = (uint8_t *)bmalloc(max_total);
   if (!nal_unit) {
     sei_log(LOG_ERROR, "Failed to allocate memory for SEI NAL unit");
     return false;
@@ -141,7 +145,7 @@ bool build_sei_nal_unit(const uint8_t *payload, size_t payload_size,
 
   size_t offset = 0;
 
-  /* 起始码 */
+  /* 起始码（Annex B start code，不属于RBSP，不做EPB计数）*/
   nal_unit[offset++] = 0x00;
   nal_unit[offset++] = 0x00;
   nal_unit[offset++] = 0x00;
@@ -152,34 +156,51 @@ bool build_sei_nal_unit(const uint8_t *payload, size_t payload_size,
     /* H.264: forbidden_bit(1) + nal_ref_idc(2) + nal_unit_type(5) */
     nal_unit[offset++] = (0 << 7) | (0 << 5) | SEI_NAL_H264;
   } else {
-    /* H.265: forbidden_bit(1) + nal_unit_type(6) + nuh_layer_id(6) +
-     * nuh_temporal_id_plus1(3) */
-    nal_unit[offset++] = (0 << 7) | (nal_type << 1) | 0;
-    nal_unit[offset++] = (0 << 5) | 1; /* temporal_id = 0 */
+    /* H.265: forbidden_zero(1) + nal_unit_type(6) + nuh_layer_id(6) + nuh_temporal_id_plus1(3)
+     * Type=39(Prefix SEI) → byte1: 0x4E, LayerId=0,TID=1 → byte2: 0x01 */
+    nal_unit[offset++] = (0 << 7) | (nal_type << 1) | 0; /* 0x4E */
+    nal_unit[offset++] = (0 << 5) | 1;                   /* 0x01 */
   }
 
-  /* SEI type */
+  /* SEI payloadType */
   memcpy(nal_unit + offset, type_buf, type_len);
   offset += type_len;
 
-  /* SEI size */
+  /* SEI payloadSize（记录原始未转义长度）*/
   memcpy(nal_unit + offset, size_buf, size_len);
   offset += size_len;
 
-  /* Payload */
-  memcpy(nal_unit + offset, payload, payload_size);
-  offset += payload_size;
+  /* Payload（需做EPB转义）
+   * EPB规则（ISO/IEC 23008-2 §7.4.1）：
+   *   在RBSP中，若出现 00 00 {00 | 01 | 02 | 03} 序列，
+   *   则在第三字节之前插入 emulation prevention byte 0x03。
+   * NAL header+type+size 写完后连续零计数重置（因为它们固定值不会以00结尾到达此处）
+   * 实际上需要连续跟踪整个RBSP的zero_count，此处保守地从0开始，
+   * 对32字节的UUID+时间戳payload是足够的 */
+  int zero_count = 0; /* 当前RBSP中连续0x00字节数 */
+  for (size_t i = 0; i < payload_size; i++) {
+    uint8_t b = payload[i];
+    /* 当前已连续>=2个00，且当前字节 <= 0x03，需插入EPB */
+    if (zero_count >= 2 && b <= 0x03) {
+      nal_unit[offset++] = 0x03;
+      zero_count = 0;
+    }
+    nal_unit[offset++] = b;
+    zero_count = (b == 0x00) ? (zero_count + 1) : 0;
+  }
 
-  /* RBSP trailing bits */
+  /* RBSP trailing bits: 0x80（bit=1，其余补0以字节对齐）*/
   nal_unit[offset++] = 0x80;
 
   *nal_unit_out = nal_unit;
   *nal_unit_size = offset;
 
-  sei_log(LOG_DEBUG, "Built SEI NAL unit (%zu bytes)", offset);
+  sei_log(LOG_DEBUG, "Built SEI NAL unit (%zu bytes, raw payload=%zu bytes)",
+          offset, payload_size);
 
   return true;
 }
+
 
 /* 合并SEI数据 */
 bool merge_sei_data(const uint8_t *original_sei, size_t original_size,
@@ -229,42 +250,53 @@ bool parse_ntp_sei(const uint8_t *sei_data, size_t sei_size,
     return false;
   }
 
+  uint8_t unescaped[2048];
+  size_t unescaped_size = 0;
+  for (size_t i = 0; i < sei_size; i++) {
+    if (i >= 2 && sei_data[i] == 0x03 && sei_data[i-1] == 0 && sei_data[i-2] == 0) {
+      continue;
+    }
+    if (unescaped_size < sizeof(unescaped)) {
+      unescaped[unescaped_size++] = sei_data[i];
+    }
+  }
+
   /* 查找我们的UUID */
-  for (size_t i = 0; i + 32 <= sei_size; i++) {
-    if (memcmp(sei_data + i, SEI_STAMPER_UUID, 16) == 0) {
+  for (size_t i = 0; i + 32 <= unescaped_size; i++) {
+    if (memcmp(unescaped + i, SEI_STAMPER_UUID, 16) == 0) {
       /* 找到了!解析数据 */
       size_t offset = i;
 
       /* UUID */
-      memcpy(ntp_data_out->uuid, sei_data + offset, 16);
+      memcpy(ntp_data_out->uuid, unescaped + offset, 16);
       offset += 16;
 
       /* PTS */
       int64_t pts = 0;
-      pts |= ((int64_t)sei_data[offset++] << 56);
-      pts |= ((int64_t)sei_data[offset++] << 48);
-      pts |= ((int64_t)sei_data[offset++] << 40);
-      pts |= ((int64_t)sei_data[offset++] << 32);
-      pts |= ((int64_t)sei_data[offset++] << 24);
-      pts |= ((int64_t)sei_data[offset++] << 16);
-      pts |= ((int64_t)sei_data[offset++] << 8);
-      pts |= (int64_t)sei_data[offset++];
+      pts |= ((int64_t)unescaped[offset++] << 56);
+      pts |= ((int64_t)unescaped[offset++] << 48);
+      pts |= ((int64_t)unescaped[offset++] << 40);
+      pts |= ((int64_t)unescaped[offset++] << 32);
+      pts |= ((int64_t)unescaped[offset++] << 24);
+      pts |= ((int64_t)unescaped[offset++] << 16);
+      pts |= ((int64_t)unescaped[offset++] << 8);
+      pts |= (int64_t)unescaped[offset++];
       ntp_data_out->pts = pts;
 
       /* NTP seconds */
       uint32_t seconds = 0;
-      seconds |= ((uint32_t)sei_data[offset++] << 24);
-      seconds |= ((uint32_t)sei_data[offset++] << 16);
-      seconds |= ((uint32_t)sei_data[offset++] << 8);
-      seconds |= (uint32_t)sei_data[offset++];
+      seconds |= ((uint32_t)unescaped[offset++] << 24);
+      seconds |= ((uint32_t)unescaped[offset++] << 16);
+      seconds |= ((uint32_t)unescaped[offset++] << 8);
+      seconds |= (uint32_t)unescaped[offset++];
       ntp_data_out->ntp_time.seconds = seconds;
 
       /* NTP fraction */
       uint32_t fraction = 0;
-      fraction |= ((uint32_t)sei_data[offset++] << 24);
-      fraction |= ((uint32_t)sei_data[offset++] << 16);
-      fraction |= ((uint32_t)sei_data[offset++] << 8);
-      fraction |= (uint32_t)sei_data[offset++];
+      fraction |= ((uint32_t)unescaped[offset++] << 24);
+      fraction |= ((uint32_t)unescaped[offset++] << 16);
+      fraction |= ((uint32_t)unescaped[offset++] << 8);
+      fraction |= (uint32_t)unescaped[offset++];
       ntp_data_out->ntp_time.fraction = fraction;
 
       sei_log(LOG_DEBUG, "Parsed NTP SEI (PTS: %lld, NTP: %u.%u)", pts, seconds,
@@ -278,59 +310,73 @@ bool parse_ntp_sei(const uint8_t *sei_data, size_t sei_size,
 }
 
 /* 从NAL单元中提取SEI payload */
+static const uint8_t *find_start_code_sei(const uint8_t *data, size_t size, size_t *sc_size) {
+  if (size < 3) return NULL;
+  for (size_t i = 0; i < size - 2; i++) {
+    if (data[i] == 0 && data[i+1] == 0) {
+      if (data[i+2] == 1) {
+        *sc_size = 3; return data + i;
+      } else if (i < size - 3 && data[i+2] == 0 && data[i+3] == 1) {
+        *sc_size = 4; return data + i;
+      }
+    }
+  }
+  return NULL;
+}
+
 bool extract_sei_payload(const uint8_t *nal_data, size_t nal_size,
                          const uint8_t **payload_out, size_t *payload_size) {
   if (!nal_data || !payload_out || !payload_size || nal_size < 5) {
     return false;
   }
 
-  size_t offset = 0;
+  const uint8_t *current = nal_data;
+  size_t remaining = nal_size;
 
-  /* 跳过起始码 */
-  if (nal_size >= 4 && nal_data[0] == 0x00 && nal_data[1] == 0x00) {
-    if (nal_data[2] == 0x00 && nal_data[3] == 0x01) {
-      offset = 4;
-    } else if (nal_data[2] == 0x01) {
-      offset = 3;
+  while (remaining > 0) {
+    size_t sc_size = 0;
+    const uint8_t *nal_start = find_start_code_sei(current, remaining, &sc_size);
+    if (!nal_start) break;
+
+    const uint8_t *data = nal_start + sc_size;
+    size_t data_rem = remaining - (data - current);
+    if (data_rem < 2) break; /* Need at least 2 bytes for H.265 header */
+
+    uint8_t nal_type_byte = data[0];
+    uint8_t nal_type = nal_type_byte & 0x1F;
+    size_t offset = 0;
+    bool is_sei = false;
+
+    if (nal_type == SEI_NAL_H264) {
+      is_sei = true;
+      offset = 1;
+    } else {
+      uint8_t h265_type = (nal_type_byte >> 1) & 0x3F;
+      if (h265_type == SEI_NAL_H265_PREFIX || h265_type == SEI_NAL_H265_SUFFIX) {
+        is_sei = true;
+        offset = 2;
+      }
     }
-  }
 
-  if (offset == 0) {
-    return false;
-  }
+    if (is_sei && data_rem > offset) {
+      size_t sei_type;
+      size_t type_read = read_variable_length(data + offset, data_rem - offset, &sei_type);
+      offset += type_read;
+      
+      size_t sei_size;
+      size_t size_read = read_variable_length(data + offset, data_rem - offset, &sei_size);
+      offset += size_read;
 
-  /* 检查NAL类型 */
-  uint8_t nal_type_byte = nal_data[offset];
-  uint8_t nal_type = nal_type_byte & 0x1F; /* H.264 */
-
-  if (nal_type != SEI_NAL_H264) {
-    /* 尝试H.265 */
-    nal_type = (nal_type_byte >> 1) & 0x3F;
-    if (nal_type != SEI_NAL_H265_PREFIX && nal_type != SEI_NAL_H265_SUFFIX) {
-      return false;
+      if (sei_type == SEI_TYPE_USER_DATA_UNREGISTERED && offset + sei_size <= data_rem) {
+        *payload_out = data + offset;
+        *payload_size = data_rem - offset;
+        return true;
+      }
     }
-    offset += 2; /* H.265有2字节头 */
-  } else {
-    offset += 1; /* H.264有1字节头 */
+
+    current = nal_start + 1; // Advance past current start code
+    remaining = nal_size - (current - nal_data);
   }
 
-  /* 读取SEI type */
-  size_t sei_type;
-  offset +=
-      read_variable_length(nal_data + offset, nal_size - offset, &sei_type);
-
-  /* 读取SEI size */
-  size_t sei_size;
-  offset +=
-      read_variable_length(nal_data + offset, nal_size - offset, &sei_size);
-
-  /* 验证大小 */
-  if (offset + sei_size > nal_size) {
-    return false;
-  }
-
-  *payload_out = nal_data + offset;
-  *payload_size = sei_size;
-
-  return true;
+  return false;
 }
