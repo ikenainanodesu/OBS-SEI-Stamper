@@ -196,6 +196,7 @@ Portions of this project's code and documentation were generated with the assist
 ### v1.2.2 (2026-03-26)
 
 **✨ Updates:**
+- 🛠️ **Encoder Refactoring**: Refactored the H.265 (HEVC) encoder core logic by removing global header flags to force in-band parameter sets, significantly improving compatibility with MPEG-TS containers and streaming servers like SLS.
 - 📝 **Documentation**: Removed AV1 encoding descriptions. Updated H.265 status to reflect limited SLS server support.
 - 🔧 **Code Maintenance**: Fixed IDE thread compilation warnings (`pthread.h`).
 
