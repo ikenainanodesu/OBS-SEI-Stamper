@@ -191,6 +191,14 @@ Portions of this project's code and documentation were generated with the assist
 
 ---
 
+## License
+
+GPL-2.0 License - aligned with OBS Studio license.
+
+See the [LICENSE](LICENSE) file for details.
+
+---
+
 ## Release Notes
 
 ### v1.2.2 (2026-03-26)
