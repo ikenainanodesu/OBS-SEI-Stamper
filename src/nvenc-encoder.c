@@ -91,6 +91,28 @@ static bool nvenc_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
 }
 #endif
 
+/*
+ * Translate the unified-encoder UI preset ("fast"/"balanced"/"quality") to a
+ * modern NVENC SDK 10+ P1-P7 preset accepted by FFmpeg's h264_nvenc/hevc_nvenc/
+ * av1_nvenc. The legacy presets (default/slow/medium/fast/hp/hq/bd/ll/llhq/llhp/
+ * lossless/losslesshp) were deprecated by NVIDIA starting with the R550 driver,
+ * so passing them through to FFmpeg fails with EINVAL on modern systems.
+ * Already-valid P1-P7 strings pass through unchanged.
+ */
+static const char *nvenc_translate_preset(const char *in) {
+  if (!in || !*in)
+    return "p4";
+  if (strcmp(in, "fast") == 0)
+    return "p2";
+  if (strcmp(in, "balanced") == 0)
+    return "p4";
+  if (strcmp(in, "quality") == 0)
+    return "p7";
+  if (in[0] == 'p' && in[1] >= '1' && in[1] <= '7' && in[2] == '\0')
+    return in;
+  return "p4";
+}
+
 /* H.264/H.265 NAL类型定义 */
 #define H264_NAL_SPS 7
 #define H264_NAL_PPS 8
@@ -300,11 +322,12 @@ void *nvenc_encoder_create_internal(obs_data_t *settings,
   /* NVENC 特定选项 */
   AVDictionary *opts = NULL;
 
-  /* Preset */
-  if (enc->preset && strlen(enc->preset) > 0) {
-    av_dict_set(&opts, "preset", enc->preset, 0);
-    encoder_log(LOG_INFO, enc, "Using preset: %s", enc->preset);
-  }
+  /* Preset (translate to NVENC SDK 10+ P1-P7 — legacy presets are deprecated
+   * by the R550 driver and cause EINVAL on modern systems) */
+  const char *nvenc_preset = nvenc_translate_preset(enc->preset);
+  av_dict_set(&opts, "preset", nvenc_preset, 0);
+  encoder_log(LOG_INFO, enc, "Using NVENC preset: %s (requested: %s)",
+              nvenc_preset, (enc->preset && *enc->preset) ? enc->preset : "(default)");
 
   /* Profile */
   if (enc->profile && strlen(enc->profile) > 0) {
