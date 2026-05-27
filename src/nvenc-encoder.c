@@ -92,16 +92,18 @@ static bool nvenc_build_sei_nal_unit(uint8_t *payload, size_t payload_size,
 #endif
 
 /*
- * Convert FFmpeg's H.264 extradata to a raw Annex-B byte stream so it can be
- * prepended inline at each keyframe. FFmpeg's h264_nvenc emits extradata in
- * Annex-B form (with start codes) when AV_CODEC_FLAG_GLOBAL_HEADER is set, but
- * for safety we also handle the AVCDecoderConfigurationRecord (AVCC) form.
+ * Convert FFmpeg encoder extradata to a raw Annex-B byte stream so it can be
+ * prepended inline at each keyframe. FFmpeg's h264_nvenc / hevc_nvenc both
+ * emit extradata in Annex-B form (start codes) under AV_CODEC_FLAG_GLOBAL_HEADER,
+ * which is the path this plugin uses. As a defensive fallback the H.264
+ * AVCDecoderConfigurationRecord (AVCC) layout is also parsed; HEVC's HVCC is
+ * not (it would return NULL → caller warning, harmless for the Annex-B case).
  * Returns a bmalloc'd buffer, or NULL on failure. *out_size is set to 0 on
  * failure or when the input format is unrecognised.
  */
-static uint8_t *nvenc_h264_extradata_to_annexb(const uint8_t *extradata,
-                                               size_t extradata_size,
-                                               size_t *out_size) {
+static uint8_t *nvenc_extradata_to_annexb(const uint8_t *extradata,
+                                          size_t extradata_size,
+                                          size_t *out_size) {
   *out_size = 0;
   if (!extradata || extradata_size < 4)
     return NULL;
@@ -208,6 +210,33 @@ static const char *nvenc_translate_preset(const char *in) {
   if (in[0] == 'p' && in[1] >= '1' && in[1] <= '7' && in[2] == '\0')
     return in;
   return "p4";
+}
+
+/*
+ * Resolve the codec-appropriate profile string for FFmpeg's *_nvenc encoders.
+ * The unified-encoder UI exposes H.264 profile names (baseline/main/high) for
+ * all codecs, but hevc_nvenc accepts only main/main10/rext and av1_nvenc only
+ * main. Passing "high" to hevc_nvenc returns EINVAL from avcodec_open2 — so
+ * we coerce unrecognised values to a sensible per-codec default.
+ *
+ * codec_type: 0 = H.264, 1 = H.265, 2 = AV1.
+ * Returns NULL to mean "do not set the profile option".
+ */
+static const char *nvenc_resolve_profile(int codec_type, const char *in) {
+  if (codec_type == 0) { /* h264_nvenc: baseline/main/high/high444p */
+    if (!in || !*in)
+      return "high";
+    return in;
+  }
+  if (codec_type == 1) { /* hevc_nvenc: main/main10/rext */
+    if (in && (!strcmp(in, "main") || !strcmp(in, "main10") ||
+               !strcmp(in, "rext")))
+      return in;
+    return "main";
+  }
+  if (codec_type == 2) /* av1_nvenc: main */
+    return "main";
+  return NULL;
 }
 
 /* H.264/H.265 NAL类型定义 */
@@ -417,14 +446,17 @@ void *nvenc_encoder_create_internal(obs_data_t *settings,
   enc->codec_context->gop_size = enc->keyint;
   enc->codec_context->max_b_frames = enc->bframes;
 
-  /* For H.264 only: enable GLOBAL_HEADER so FFmpeg populates extradata at
-   * avcodec_open2() with an SPS/PPS sequence header. Without this, NVENC's
-   * extradata stays empty and OBS's RTMP/FLV muxer has no AVCDecoder-
-   * ConfigurationRecord to send, which causes ingest servers (e.g. Streamshark)
-   * to drop the stream within ~100ms with zero frames sent. We restore the
-   * inline SPS/PPS at each keyframe ourselves below, preserving MPEG-TS/SRT
-   * behaviour. H.265 keeps its v1.2.2 SLS-compat behaviour (no GLOBAL_HEADER). */
-  if (enc->codec_type == 0) {
+  /* Enable GLOBAL_HEADER for H.264 and H.265 so FFmpeg populates extradata at
+   * avcodec_open2() with a codec sequence header. Without it:
+   *   - H.264: OBS's RTMP/FLV muxer has no AVCDecoderConfigurationRecord
+   *     → ingest servers drop the stream within ~100ms.
+   *   - H.265: OBS's file/MPEG-TS muxer has no HEVCDecoderConfigurationRecord
+   *     → recording hangs at stop and SLS/SRT distribution fails (frames only
+   *     reach P2P listeners that happened to catch an in-band header).
+   * We re-inject SPS/PPS (and VPS for HEVC) inline at each keyframe below,
+   * preserving the v1.2.2 in-band-parameter-set behaviour for MPEG-TS/SRT
+   * receivers that join mid-stream. AV1 is left untouched. */
+  if (enc->codec_type == 0 || enc->codec_type == 1) {
     enc->codec_context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
   }
 
@@ -438,9 +470,14 @@ void *nvenc_encoder_create_internal(obs_data_t *settings,
   encoder_log(LOG_INFO, enc, "Using NVENC preset: %s (requested: %s)",
               nvenc_preset, (enc->preset && *enc->preset) ? enc->preset : "(default)");
 
-  /* Profile */
-  if (enc->profile && strlen(enc->profile) > 0) {
-    av_dict_set(&opts, "profile", enc->profile, 0);
+  /* Profile (coerce to codec-valid value — the UI exposes H.264 names for all
+   * codecs, but hevc_nvenc/av1_nvenc reject "high" with EINVAL). */
+  const char *nvenc_profile = nvenc_resolve_profile(enc->codec_type, enc->profile);
+  if (nvenc_profile) {
+    av_dict_set(&opts, "profile", nvenc_profile, 0);
+    encoder_log(LOG_INFO, enc, "Using NVENC profile: %s (requested: %s)",
+                nvenc_profile,
+                (enc->profile && *enc->profile) ? enc->profile : "(default)");
   }
 
   /* Rate control - CBR */
@@ -474,26 +511,28 @@ void *nvenc_encoder_create_internal(obs_data_t *settings,
     encoder_log(LOG_INFO, enc, "Extra data size: %zu bytes",
                 enc->extra_data_size);
 
-    /* For H.264 with GLOBAL_HEADER on, build a reusable Annex-B SPS/PPS
-     * payload so we can keep parameter sets inline at every keyframe (needed
-     * for SRT/MPEG-TS receivers that join mid-stream). */
-    if (enc->codec_type == 0) {
-      enc->inline_params = nvenc_h264_extradata_to_annexb(
+    /* For H.264 / H.265 with GLOBAL_HEADER on, build a reusable Annex-B
+     * parameter-set payload (SPS/PPS, plus VPS for HEVC) so we can keep
+     * parameter sets inline at every keyframe — required by MPEG-TS / SRT
+     * receivers (and SLS servers) that join mid-stream. */
+    if (enc->codec_type == 0 || enc->codec_type == 1) {
+      enc->inline_params = nvenc_extradata_to_annexb(
           enc->extra_data, enc->extra_data_size, &enc->inline_params_size);
       if (enc->inline_params && enc->inline_params_size > 0) {
         encoder_log(LOG_INFO, enc,
-                    "Inline SPS/PPS payload built: %zu bytes (Annex-B)",
+                    "Inline parameter set payload built: %zu bytes (Annex-B)",
                     enc->inline_params_size);
       } else {
         encoder_log(LOG_WARNING, enc,
-                    "Could not build inline SPS/PPS from extradata; SRT "
-                    "consumers may need to wait for next out-of-band header");
+                    "Could not build inline parameter sets from extradata; "
+                    "mid-stream MPEG-TS/SRT joiners may need to wait for the "
+                    "next out-of-band header");
       }
     }
-  } else if (enc->codec_type == 0) {
+  } else if (enc->codec_type == 0 || enc->codec_type == 1) {
     encoder_log(LOG_WARNING, enc,
-                "H.264 extradata is empty after open — RTMP/FLV will likely "
-                "fail (no AVC sequence header)");
+                "Extradata is empty after open — recording / RTMP will likely "
+                "fail (no codec sequence header in container)");
   }
 
   encoder_log(LOG_INFO, enc,
